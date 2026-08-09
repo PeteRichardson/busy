@@ -142,17 +142,26 @@ And write `.gitignore`:
 /target
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 2: Write the shared test helpers**
 
-Create `tests/cli_surface.rs`:
+Each file under `tests/` compiles as its own crate, so helpers can only be shared through a `common` module that each one declares. Every later task's tests use these; do not redefine them per file.
+
+Create `tests/common/mod.rs`:
 
 ```rust
-use assert_cmd::Command;
-use predicates::str::contains;
+//! Helpers shared by the integration test crates.
+//!
+//! Each file in tests/ is a separate crate that compiles this whole module but
+//! uses only part of it, so unused-item warnings here are expected rather than
+//! a signal.
+#![allow(dead_code)]
 
-/// Always run with a neutral environment so the developer's own config and
-/// `BUSY_*` variables cannot change what these assertions see.
-fn busy() -> Command {
+use assert_cmd::Command;
+use wiremock::{MockServer, ResponseTemplate};
+
+/// A `busy` invocation with a neutral environment, so a developer's own config
+/// file and `BUSY_*` variables can never change what a test observes.
+pub fn busy() -> Command {
     let mut command = Command::cargo_bin("busy").expect("binary `busy` should build");
     command
         .env_remove("BUSY_ADDR")
@@ -161,6 +170,29 @@ fn busy() -> Command {
         .env("XDG_CONFIG_HOME", "/nonexistent");
     command
 }
+
+/// `busy` pointed at a mock device.
+pub fn busy_at(server: &MockServer) -> Command {
+    let mut command = busy();
+    command.args(["--addr", &server.uri()]);
+    command
+}
+
+/// The body the device returns on success.
+pub fn ok() -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(serde_json::json!({"result": "OK"}))
+}
+```
+
+- [ ] **Step 3: Write the failing test**
+
+Create `tests/cli_surface.rs`:
+
+```rust
+mod common;
+
+use common::busy;
+use predicates::str::contains;
 
 #[test]
 fn bare_invocation_prints_help_and_fails() {
@@ -203,12 +235,12 @@ fn there_is_no_bare_top_level_positional() {
 }
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [ ] **Step 4: Run the tests to verify they fail**
 
 Run: `cargo test --test cli_surface`
 Expected: FAIL — the binary does not yet accept a `text` subcommand.
 
-- [ ] **Step 4: Write `src/cli.rs`**
+- [ ] **Step 5: Write `src/cli.rs`**
 
 ```rust
 //! Command-line surface.
@@ -416,7 +448,7 @@ pub enum PrefixArg {
 }
 ```
 
-- [ ] **Step 5: Write `src/main.rs`**
+- [ ] **Step 6: Write `src/main.rs`**
 
 ```rust
 mod cli;
@@ -429,17 +461,17 @@ fn main() {
 }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `cargo test --test cli_surface`
 Expected: PASS, 5 tests.
 
 Also check the help reads well: `cargo run -- text --help`. The four `next_help_heading` groups should each appear as their own section.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add Cargo.toml Cargo.lock .gitignore src/main.rs src/cli.rs tests/cli_surface.rs
+git add Cargo.toml Cargo.lock .gitignore src/main.rs src/cli.rs tests/common/mod.rs tests/cli_surface.rs
 git commit -m "feat: crate skeleton and clap command surface"
 ```
 
@@ -686,9 +718,18 @@ mod tests {
     }
 
     #[test]
-    fn control_characters_are_dropped() {
+    fn line_endings_and_tabs_become_spaces() {
+        // The bar draws a single line, so whitespace is more useful collapsed
+        // to a space than dropped: "line break" beats "linebreak".
         let result = to_ascii("line\nbreak\ttab");
-        assert_eq!(result.text, "linebreaktab");
+        assert_eq!(result.text, "line break tab");
+        assert!(result.changed);
+    }
+
+    #[test]
+    fn other_control_characters_are_dropped() {
+        let result = to_ascii("bell\u{0007}here");
+        assert_eq!(result.text, "bellhere");
         assert!(result.changed);
     }
 
@@ -749,8 +790,10 @@ pub fn to_ascii(input: &str) -> Sanitized {
                 changed = true;
             }
 
-            // Spaces.
-            '\u{00a0}' | '\u{2007}' | '\u{202f}' | '\u{2009}' | '\t' => {
+            // Whitespace of every kind collapses to a plain space. The display
+            // is one line, so a newline is more useful as a space than as
+            // nothing.
+            '\u{00a0}' | '\u{2007}' | '\u{202f}' | '\u{2009}' | '\t' | '\n' | '\r' => {
                 text.push(' ');
                 changed = true;
             }
@@ -765,7 +808,7 @@ pub fn to_ascii(input: &str) -> Sanitized {
                 changed = true;
             }
 
-            // Anything else, including emoji and newlines, is dropped.
+            // Anything else — emoji, other control characters — is dropped.
             _ => changed = true,
         }
     }
@@ -779,7 +822,7 @@ Add `mod sanitize;` to `src/main.rs`.
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cargo test sanitize`
-Expected: PASS, 5 tests.
+Expected: PASS, 6 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1389,20 +1432,14 @@ The highest-value test in the project. Because `--dry-run` serializes the same t
 Create `tests/payload.rs`:
 
 ```rust
-use assert_cmd::Command;
+mod common;
 
-/// Run `busy` with a clean environment so the developer's own config and env
-/// cannot leak into the golden payload.
-fn busy(args: &[&str]) -> String {
-    let output = Command::cargo_bin("busy")
-        .expect("binary `busy` should build")
-        .env_remove("BUSY_ADDR")
-        .env_remove("BUSY_TOKEN")
-        .env_remove("BUSY_APP")
-        .env("XDG_CONFIG_HOME", "/nonexistent")
-        .args(args)
-        .output()
-        .expect("should run");
+use common::busy;
+
+/// Run `busy`, require success, and hand back stdout — which under `--dry-run`
+/// is the exact wire payload.
+fn stdout(args: &[&str]) -> String {
+    let output = busy().args(args).output().expect("should run");
     assert!(
         output.status.success(),
         "command failed: {}",
@@ -1413,7 +1450,7 @@ fn busy(args: &[&str]) -> String {
 
 #[test]
 fn golden_payload_for_the_fully_specified_command() {
-    let payload = busy(&[
+    let payload = stdout(&[
         "--dry-run",
         "text",
         "-x",
@@ -1433,12 +1470,12 @@ fn golden_payload_for_the_fully_specified_command() {
 
 #[test]
 fn golden_payload_for_the_minimal_command() {
-    insta::assert_snapshot!(busy(&["--dry-run", "text", "Hello, World!"]));
+    insta::assert_snapshot!(stdout(&["--dry-run", "text", "Hello, World!"]));
 }
 
 #[test]
 fn golden_payload_with_a_lifetime_and_an_led() {
-    insta::assert_snapshot!(busy(&[
+    insta::assert_snapshot!(stdout(&[
         "--dry-run",
         "text",
         "--timeout",
@@ -1453,7 +1490,7 @@ fn golden_payload_with_a_lifetime_and_an_led() {
 
 #[test]
 fn smart_quotes_are_sanitized_into_the_payload() {
-    let payload = busy(&["--dry-run", "text", "don\u{2019}t \u{2014} really"]);
+    let payload = stdout(&["--dry-run", "text", "don\u{2019}t \u{2014} really"]);
     assert!(
         payload.contains(r#""text": "don't - really""#),
         "got {payload}"
@@ -1462,9 +1499,7 @@ fn smart_quotes_are_sanitized_into_the_payload() {
 
 #[test]
 fn a_message_that_sanitizes_to_empty_is_a_clear_error() {
-    let output = Command::cargo_bin("busy")
-        .unwrap()
-        .env("XDG_CONFIG_HOME", "/nonexistent")
+    let output = busy()
         .args(["--dry-run", "text", "\u{1f389}"])
         .output()
         .unwrap();
@@ -1478,8 +1513,7 @@ fn a_message_that_sanitizes_to_empty_is_a_clear_error() {
 
 #[test]
 fn timeout_and_until_conflict() {
-    let output = Command::cargo_bin("busy")
-        .unwrap()
+    let output = busy()
         .args(["text", "--timeout", "30", "--until", "1900000000", "hi"])
         .output()
         .unwrap();
@@ -2002,23 +2036,11 @@ git commit -m "feat: warn about out-of-bounds element coordinates"
 Create `tests/device.rs`:
 
 ```rust
-use assert_cmd::Command;
-use wiremock::matchers::{body_json_string, method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+mod common;
 
-/// Run `busy` against a mock server with a clean environment.
-fn busy(server: &MockServer, args: &[&str]) -> std::process::Output {
-    Command::cargo_bin("busy")
-        .expect("binary `busy` should build")
-        .env_remove("BUSY_ADDR")
-        .env_remove("BUSY_TOKEN")
-        .env_remove("BUSY_APP")
-        .env("XDG_CONFIG_HOME", "/nonexistent")
-        .args(["--addr", &server.uri()])
-        .args(args)
-        .output()
-        .expect("should run")
-}
+use common::{busy, busy_at, ok};
+use wiremock::matchers::{header, method, path, query_param};
+use wiremock::{Mock, MockServer};
 
 #[tokio::test]
 async fn a_draw_reaches_the_device() {
@@ -2027,19 +2049,22 @@ async fn a_draw_reaches_the_device() {
     Mock::given(method("DELETE"))
         .and(path("/api/display/draw"))
         .and(query_param("application_name", "busy"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"result": "OK"})))
+        .respond_with(ok())
         .expect(1)
         .mount(&server)
         .await;
 
     Mock::given(method("POST"))
         .and(path("/api/display/draw"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"result": "OK"})))
+        .respond_with(ok())
         .expect(1)
         .mount(&server)
         .await;
 
-    let output = busy(&server, &["text", "Hello, World!"]);
+    let output = busy_at(&server)
+        .args(["text", "Hello, World!"])
+        .output()
+        .expect("should run");
     assert!(
         output.status.success(),
         "stderr: {}",
@@ -2051,11 +2076,14 @@ async fn a_draw_reaches_the_device() {
 async fn the_cloud_prefix_is_selectable() {
     let server = MockServer::start().await;
     Mock::given(path("/busybar/display/draw"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"result": "OK"})))
+        .respond_with(ok())
         .mount(&server)
         .await;
 
-    let output = busy(&server, &["--api-prefix", "cloud", "text", "hi"]);
+    let output = busy_at(&server)
+        .args(["--api-prefix", "cloud", "text", "hi"])
+        .output()
+        .expect("should run");
     assert!(output.status.success());
 }
 
@@ -2063,13 +2091,16 @@ async fn the_cloud_prefix_is_selectable() {
 async fn a_token_is_sent_as_a_bearer_header() {
     let server = MockServer::start().await;
     Mock::given(path("/api/display/draw"))
-        .and(wiremock::matchers::header("authorization", "Bearer 12345678"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"result": "OK"})))
+        .and(header("authorization", "Bearer 12345678"))
+        .respond_with(ok())
         .expect(2) // the DELETE and the POST
         .mount(&server)
         .await;
 
-    let output = busy(&server, &["--token", "12345678", "text", "hi"]);
+    let output = busy_at(&server)
+        .args(["--token", "12345678", "text", "hi"])
+        .output()
+        .expect("should run");
     assert!(output.status.success());
 }
 
@@ -2077,19 +2108,20 @@ async fn a_token_is_sent_as_a_bearer_header() {
 async fn dry_run_sends_nothing() {
     let server = MockServer::start().await;
     // No mocks mounted: any request would 404 and fail the command.
-    let output = busy(&server, &["--dry-run", "text", "hi"]);
+    let output = busy_at(&server)
+        .args(["--dry-run", "text", "hi"])
+        .output()
+        .expect("should run");
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("\"application_name\": \"busy\""));
 }
 
 #[tokio::test]
 async fn an_unreachable_device_fails_with_exit_1() {
-    let output = Command::cargo_bin("busy")
-        .unwrap()
-        .env("XDG_CONFIG_HOME", "/nonexistent")
+    let output = busy()
         .args(["--addr", "http://127.0.0.1:1", "text", "hi"])
         .output()
-        .unwrap();
+        .expect("should run");
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("127.0.0.1:1"), "got {stderr}");
@@ -2291,27 +2323,18 @@ git commit -m "feat: send draw requests to the device"
 Create `tests/errors.rs`:
 
 ```rust
-use assert_cmd::Command;
+mod common;
+
+use common::{busy, busy_at, ok};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn busy(server: &MockServer, args: &[&str]) -> std::process::Output {
-    Command::cargo_bin("busy")
-        .expect("binary `busy` should build")
-        .env_remove("BUSY_ADDR")
-        .env_remove("BUSY_TOKEN")
-        .env_remove("BUSY_APP")
-        .env("XDG_CONFIG_HOME", "/nonexistent")
-        .args(["--addr", &server.uri()])
-        .args(args)
-        .output()
-        .expect("should run")
-}
-
+/// Let the clear succeed and the draw fail, which is the shape every error
+/// case here needs.
 async fn draw_responds(server: &MockServer, status: u16, body: serde_json::Value) {
     Mock::given(method("DELETE"))
         .and(path("/api/display/draw"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"result": "OK"})))
+        .respond_with(ok())
         .mount(server)
         .await;
     Mock::given(method("POST"))
@@ -2331,7 +2354,10 @@ async fn a_409_becomes_priority_guidance_not_a_status_code() {
     )
     .await;
 
-    let output = busy(&server, &["text", "Build Failed!"]);
+    let output = busy_at(&server)
+        .args(["text", "Build Failed!"])
+        .output()
+        .expect("should run");
     assert_eq!(output.status.code(), Some(1));
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2346,7 +2372,10 @@ async fn the_reported_priority_is_the_one_that_was_requested() {
     let server = MockServer::start().await;
     draw_responds(&server, 409, serde_json::json!({"error": "nope"})).await;
 
-    let output = busy(&server, &["text", "--priority", "low", "hi"]);
+    let output = busy_at(&server)
+        .args(["text", "--priority", "low", "hi"])
+        .output()
+        .expect("should run");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("priority 10"), "got {stderr}");
 }
@@ -2356,7 +2385,7 @@ async fn a_401_explains_the_access_key() {
     let server = MockServer::start().await;
     draw_responds(&server, 401, serde_json::json!({"error": "Unauthorized"})).await;
 
-    let output = busy(&server, &["text", "hi"]);
+    let output = busy_at(&server).args(["text", "hi"]).output().expect("should run");
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("BUSY_TOKEN"), "got {stderr}");
@@ -2372,7 +2401,7 @@ async fn a_400_surfaces_the_device_message() {
     )
     .await;
 
-    let output = busy(&server, &["text", "hi"]);
+    let output = busy_at(&server).args(["text", "hi"]).output().expect("should run");
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Failed to decode image"), "got {stderr}");
@@ -2380,12 +2409,10 @@ async fn a_400_surfaces_the_device_message() {
 
 #[test]
 fn a_bad_address_is_a_usage_error() {
-    let output = Command::cargo_bin("busy")
-        .unwrap()
-        .env("XDG_CONFIG_HOME", "/nonexistent")
+    let output = busy()
         .args(["--addr", "ftp://nope", "text", "hi"])
         .output()
-        .unwrap();
+        .expect("should run");
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("--addr"));
 }
@@ -2429,26 +2456,11 @@ git commit -m "test: cover priority conflicts and device error mapping"
 Create `tests/replace.rs`:
 
 ```rust
-use assert_cmd::Command;
+mod common;
+
+use common::{busy, busy_at, ok};
 use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
-
-fn busy(server: &MockServer, args: &[&str]) -> std::process::Output {
-    Command::cargo_bin("busy")
-        .expect("binary `busy` should build")
-        .env_remove("BUSY_ADDR")
-        .env_remove("BUSY_TOKEN")
-        .env_remove("BUSY_APP")
-        .env("XDG_CONFIG_HOME", "/nonexistent")
-        .args(["--addr", &server.uri()])
-        .args(args)
-        .output()
-        .expect("should run")
-}
-
-fn ok() -> ResponseTemplate {
-    ResponseTemplate::new(200).set_body_json(serde_json::json!({"result": "OK"}))
-}
+use wiremock::{Mock, MockServer};
 
 #[tokio::test]
 async fn a_plain_draw_clears_first() {
@@ -2466,7 +2478,8 @@ async fn a_plain_draw_clears_first() {
         .mount(&server)
         .await;
 
-    assert!(busy(&server, &["text", "hi"]).status.success());
+    let output = busy_at(&server).args(["text", "hi"]).output().expect("should run");
+    assert!(output.status.success());
     // MockServer verifies the .expect() counts when it drops.
 }
 
@@ -2486,39 +2499,37 @@ async fn keep_skips_the_clear() {
         .mount(&server)
         .await;
 
-    assert!(busy(&server, &["text", "--keep", "hi"]).status.success());
+    let output = busy_at(&server)
+        .args(["text", "--keep", "hi"])
+        .output()
+        .expect("should run");
+    assert!(output.status.success());
 }
 
 #[test]
 fn the_default_element_id_is_message() {
-    let output = Command::cargo_bin("busy")
-        .unwrap()
-        .env("XDG_CONFIG_HOME", "/nonexistent")
+    let output = busy()
         .args(["--dry-run", "text", "hi"])
         .output()
-        .unwrap();
+        .expect("should run");
     assert!(String::from_utf8_lossy(&output.stdout).contains(r#""id": "message""#));
 }
 
 #[test]
 fn the_element_id_is_overridable() {
-    let output = Command::cargo_bin("busy")
-        .unwrap()
-        .env("XDG_CONFIG_HOME", "/nonexistent")
+    let output = busy()
         .args(["--dry-run", "text", "--id", "status-line", "hi"])
         .output()
-        .unwrap();
+        .expect("should run");
     assert!(String::from_utf8_lossy(&output.stdout).contains(r#""id": "status-line""#));
 }
 
 #[test]
 fn an_element_id_with_a_space_is_rejected() {
-    let output = Command::cargo_bin("busy")
-        .unwrap()
-        .env("XDG_CONFIG_HOME", "/nonexistent")
+    let output = busy()
         .args(["--dry-run", "text", "--id", "status line", "hi"])
         .output()
-        .unwrap();
+        .expect("should run");
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("--id"));
 }
@@ -2585,26 +2596,11 @@ git commit -m "feat: replace by default, compose with --keep"
 Create `tests/output.rs`:
 
 ```rust
-use assert_cmd::Command;
+mod common;
+
+use common::{busy, busy_at, ok};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-
-fn busy(server: &MockServer, args: &[&str]) -> std::process::Output {
-    Command::cargo_bin("busy")
-        .expect("binary `busy` should build")
-        .env_remove("BUSY_ADDR")
-        .env_remove("BUSY_TOKEN")
-        .env_remove("BUSY_APP")
-        .env("XDG_CONFIG_HOME", "/nonexistent")
-        .args(["--addr", &server.uri()])
-        .args(args)
-        .output()
-        .expect("should run")
-}
-
-fn ok() -> ResponseTemplate {
-    ResponseTemplate::new(200).set_body_json(serde_json::json!({"result": "OK"}))
-}
 
 async fn mount_ok(server: &MockServer) {
     Mock::given(path("/api/display/draw"))
@@ -2618,7 +2614,10 @@ async fn json_success_is_parseable_and_carries_the_payload() {
     let server = MockServer::start().await;
     mount_ok(&server).await;
 
-    let output = busy(&server, &["--json", "text", "hi"]);
+    let output = busy_at(&server)
+        .args(["--json", "text", "hi"])
+        .output()
+        .expect("should run");
     assert!(output.status.success());
 
     let value: serde_json::Value =
@@ -2642,7 +2641,10 @@ async fn json_failure_is_parseable_and_goes_to_stderr() {
         .mount(&server)
         .await;
 
-    let output = busy(&server, &["--json", "text", "hi"]);
+    let output = busy_at(&server)
+        .args(["--json", "text", "hi"])
+        .output()
+        .expect("should run");
     assert_eq!(output.status.code(), Some(1));
 
     let value: serde_json::Value =
@@ -2656,7 +2658,10 @@ async fn quiet_suppresses_the_success_line() {
     let server = MockServer::start().await;
     mount_ok(&server).await;
 
-    let output = busy(&server, &["--quiet", "text", "hi"]);
+    let output = busy_at(&server)
+        .args(["--quiet", "text", "hi"])
+        .output()
+        .expect("should run");
     assert!(output.status.success());
     assert!(output.stdout.is_empty(), "got {:?}", output.stdout);
 }
@@ -2666,28 +2671,30 @@ async fn quiet_suppresses_bounds_warnings() {
     let server = MockServer::start().await;
     mount_ok(&server).await;
 
-    let noisy = busy(&server, &["text", "-x", "500", "hi"]);
+    let noisy = busy_at(&server)
+        .args(["text", "-x", "500", "hi"])
+        .output()
+        .expect("should run");
     assert!(String::from_utf8_lossy(&noisy.stderr).contains("outside"));
 
-    let quiet = busy(&server, &["--quiet", "text", "-x", "500", "hi"]);
+    let quiet = busy_at(&server)
+        .args(["--quiet", "text", "-x", "500", "hi"])
+        .output()
+        .expect("should run");
     assert!(quiet.stderr.is_empty(), "got {:?}", quiet.stderr);
 }
 
 #[test]
 fn dry_run_output_is_unaffected_by_json() {
     // --dry-run already emits the exact wire payload, so --json must not wrap it.
-    let plain = Command::cargo_bin("busy")
-        .unwrap()
-        .env("XDG_CONFIG_HOME", "/nonexistent")
+    let plain = busy()
         .args(["--dry-run", "text", "hi"])
         .output()
-        .unwrap();
-    let jsonic = Command::cargo_bin("busy")
-        .unwrap()
-        .env("XDG_CONFIG_HOME", "/nonexistent")
+        .expect("should run");
+    let jsonic = busy()
         .args(["--dry-run", "--json", "text", "hi"])
         .output()
-        .unwrap();
+        .expect("should run");
     assert_eq!(plain.stdout, jsonic.stdout);
 }
 ```
@@ -2763,13 +2770,9 @@ In CI the message is usually already in a pipe. `-` is the conventional sentinel
 Create `tests/stdin.rs`:
 
 ```rust
-use assert_cmd::Command;
+mod common;
 
-fn busy() -> Command {
-    let mut command = Command::cargo_bin("busy").expect("binary `busy` should build");
-    command.env("XDG_CONFIG_HOME", "/nonexistent");
-    command
-}
+use common::busy;
 
 #[test]
 fn a_dash_reads_the_message_from_stdin() {
@@ -2909,9 +2912,11 @@ git commit -m "feat: read the message from stdin with `-`"
 Create `tests/clear.rs`:
 
 ```rust
-use assert_cmd::Command;
+mod common;
+
+use common::{busy_at, ok};
 use wiremock::matchers::{method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer};
 
 #[tokio::test]
 async fn clear_deletes_this_apps_elements() {
@@ -2919,19 +2924,12 @@ async fn clear_deletes_this_apps_elements() {
     Mock::given(method("DELETE"))
         .and(path("/api/display/draw"))
         .and(query_param("application_name", "busy"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"result": "OK"})))
+        .respond_with(ok())
         .expect(1)
         .mount(&server)
         .await;
 
-    let output = Command::cargo_bin("busy")
-        .unwrap()
-        .env_remove("BUSY_ADDR")
-        .env_remove("BUSY_APP")
-        .env("XDG_CONFIG_HOME", "/nonexistent")
-        .args(["--addr", &server.uri(), "clear"])
-        .output()
-        .unwrap();
+    let output = busy_at(&server).arg("clear").output().expect("should run");
 
     assert!(
         output.status.success(),
@@ -2946,18 +2944,15 @@ async fn clear_is_scoped_to_the_selected_app() {
     Mock::given(method("DELETE"))
         .and(path("/api/display/draw"))
         .and(query_param("application_name", "ci"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"result": "OK"})))
+        .respond_with(ok())
         .expect(1)
         .mount(&server)
         .await;
 
-    let output = Command::cargo_bin("busy")
-        .unwrap()
-        .env_remove("BUSY_APP")
-        .env("XDG_CONFIG_HOME", "/nonexistent")
-        .args(["--addr", &server.uri(), "--app", "ci", "clear"])
+    let output = busy_at(&server)
+        .args(["--app", "ci", "clear"])
         .output()
-        .unwrap();
+        .expect("should run");
     assert!(output.status.success());
 }
 
@@ -2965,12 +2960,10 @@ async fn clear_is_scoped_to_the_selected_app() {
 async fn clear_honours_dry_run() {
     let server = MockServer::start().await;
     // No mocks: a request would 404 and fail.
-    let output = Command::cargo_bin("busy")
-        .unwrap()
-        .env("XDG_CONFIG_HOME", "/nonexistent")
-        .args(["--addr", &server.uri(), "--dry-run", "clear"])
+    let output = busy_at(&server)
+        .args(["--dry-run", "clear"])
         .output()
-        .unwrap();
+        .expect("should run");
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("clear"));
 }
