@@ -307,25 +307,21 @@ silently shadow the uploaded `stop.png` the user meant, and both draw *an* image
 Local re-encoding for the target display (via the `image` crate) still happens on
 `asset upload`, as §7 specifies.
 
-### 5.2 The Assets namespace is upload-and-delete-all
+### 5.2 What the Assets namespace offers, and what Storage adds
 
-Verified against the vendored spec. `/busybar/assets/upload` supports exactly:
+Per the vendored spec, `/busybar/assets/upload` supports exactly:
 
 - `POST` — write one file (`application_name` and `file` as query params, body
   `application/octet-stream`). Overwrites in place.
 - `DELETE` — delete **every** asset belonging to an app.
 
-There is no list, no read, and **no per-file delete**. Two consequences the architecture
-doc did not account for:
+No list, no read, no per-file delete. `/busybar/storage/*` has `list`, `read`, `remove`
+and `write`, but is confined to paths matching `^/ext(/[a-zA-Z0-9._\-]*)*$`, and the
+spec never says where an app's assets live inside `/ext`.
 
-- §4's `busy asset list` cannot query the device.
-- §7's "skip upload if already present" has no way to ask what is present.
-
-`/busybar/storage/*` has `list`, `read`, `remove` and `write`, but is confined to paths
-matching `^/ext(/[a-zA-Z0-9._\-]*)*$`. Nothing in the spec maps an app's asset directory
-into `/ext`. The `StorageList` example (`docs/specs/openapi.yaml:2377`) does show `/ext`
-containing a directory named `assets`, which is suggestive — but it is an example value,
-not a contract.
+**The device answers what the spec does not.** See §5.4 — app assets are at
+`/ext/user_assets/<application_name>/`, so `storage/list` and `storage/read` do reach
+them. Per-file delete still does not work.
 
 ### 5.3 Correction to the architecture doc
 
@@ -334,55 +330,70 @@ local path. The spec gives no support for this: `storage/write` is a raw
 `application/octet-stream` write to an `/ext/...` path with no documented conversion.
 Treat the parenthetical as withdrawn. Local re-encoding stays the CLI's job.
 
-### 5.4 Local hash cache, and a probe for the record
+### 5.4 Device probe — results
 
-**Implementation for v1: local cache only.** Do not touch the Storage namespace.
+Run against a physical bar (API 25.0.0) on 2026-08-09. Reproducible with
+`scripts/probe-device.sh`; re-run it after a firmware update and diff.
 
-- `~/.local/state/busy/<addr>/<app>.json` maps asset filename → content hash of the
-  bytes last uploaded from this machine.
-- `busy asset upload` writes the entry. Template asset sync skips an upload when the
-  hash matches.
-- `--force-upload` bypasses the cache.
-- `busy asset list` prints the cache, labelled *"local record; device not queried"* so
-  it is never mistaken for device truth.
-- `busy asset delete` deletes all of the app's assets device-side (the only operation
-  the API offers) and clears the cache.
+| Question | Answer |
+|---|---|
+| `/ext` layout | `apps_assets`, `user_assets`, `apps_data`, `update`, plus `Manifest` — **no `assets` dir**; the spec's `StorageList` example was generic |
+| Where app assets live | `/ext/user_assets/<application_name>/` |
+| Enumerate an app's assets | **Yes** — `storage/list` returns `[{type, name, size}]` |
+| Read an asset's bytes back | **Yes** — `storage/read` returned all 73 bytes, byte-identical |
+| Per-file delete | **No** — `storage/remove` on a real asset path returns `400 Bad Request` and the file survives |
+| Delete all of an app's assets | Yes — `DELETE assets/upload?application_name=…`, which removes the directory itself |
+| Draw referencing a missing asset | `400 {"error":"Failed to decode image /ext/user_assets/<app>/<file>."}` |
+| Stock images | `/ext/apps_assets/shared/images/*.image`, enumerable (`checkmark_front_8x8.image`, …) |
+| Stock sounds | `/ext/apps_assets/shared/sounds/*.snd` |
 
-The cache is an optimisation, and it is wrong after a factory reset, an upload from a
-different machine, or an out-of-band `asset delete`. `--force-upload` is the recovery
-path, and re-uploading is harmless because uploads are idempotent overwrites.
+Two behaviours to code around:
 
-**Run the probe in Phase 0 anyway**, and record the results in this document. It costs
-ten minutes and de-risks any future decision to move to Storage-backed sync. Auth is a
-global `Bearer` scheme; on a device with `/access?mode=key` the token is the 4–10 digit
-access key. Omit the header when access mode is `enabled`.
+- **`storage/remove`'s return value carries no signal.** It returned `OK` for a path
+  that did not exist and `Bad Request` for one that did. Never trust it; confirm with a
+  subsequent `list`.
+- **An app with no assets 400s on `list`**, because delete-all removes the directory
+  rather than emptying it. `busy asset list` must render that as "no assets", not as an
+  error.
 
-```sh
-BAR=http://10.0.4.20/api
-AUTH="Authorization: Bearer $BUSY_TOKEN"
+The missing-asset result is the important one: it is a **loud 400 that names the
+resolved path**, not a silent 200. So there is no fourth silent-failure mode for the
+architecture doc's §5, and no way for a stale presence check to produce a blank bar —
+the worst case is a failed draw with a legible error.
 
-# 1. Upload a known file, then look for it in the storage namespace.
-curl -s -H "$AUTH" -H 'Content-Type: application/octet-stream' \
-  --data-binary @probe.png \
-  "$BAR/assets/upload?application_name=busy&file=probe.png"
-curl -s -H "$AUTH" "$BAR/storage/list?path=/ext"
-curl -s -H "$AUTH" "$BAR/storage/list?path=/ext/assets"
-curl -s -H "$AUTH" "$BAR/storage/list?path=/ext/assets/busy"
+### 5.5 Device-authoritative asset sync
 
-# 2. Can a single asset be removed via storage?
-curl -s -H "$AUTH" -X DELETE "$BAR/storage/remove?path=/ext/assets/busy/probe.png"
+Because presence is verifiable (§5.4), the CLI keeps **no local state**. There is no
+`state.rs`, no `~/.local/state/busy/`, and no `--force-upload`.
 
-# 3. What does a draw referencing a missing asset return?
-curl -s -i -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BAR/display/draw" \
-  -d '{"application_name":"busy","priority":95,
-       "elements":[{"id":"probe","type":"image","path":"does-not-exist.png"}]}'
-```
+Sync for a referenced asset:
 
-Question 3 matters most. The spec documents no error for a draw referencing a
-nonexistent asset path, so it may well return 200 and render nothing — **a fourth entry
-for the architecture doc's §5 list of correct-looking draws that show nothing.** Record
-the answer; if it is a silent 200, the CLI should warn when drawing an asset name absent
-from the local cache.
+1. `storage/list?path=/ext/user_assets/<app>` — one request per sync, not per asset.
+2. Name absent → upload.
+3. Name present, size differs → upload.
+4. Name present, size matches → `storage/read` and compare content hashes; upload on
+   mismatch.
+
+Step 4 is affordable because these files are tiny — the probe asset was 73 bytes, and a
+full-width image for the 72×16 front display is a few kilobytes. Size is the cheap
+pre-filter; the hash makes it exact.
+
+This is both simpler and more correct than a local cache: nothing to invalidate after a
+factory reset, an upload from another machine, or an out-of-band `asset delete`.
+
+**Commands:**
+
+- `busy asset list` reports device truth from `storage/list`, printing "no assets" on
+  the 400 described in §5.4.
+- `busy asset delete` remains **all-or-nothing** for an app, because per-file delete
+  does not work. Say so in its `--help`, and confirm before running it interactively.
+- A future `busy asset stock` could enumerate `/ext/apps_assets/shared/images` to power
+  `stock_path` completion. Phase 5 at the earliest.
+
+**Graceful degradation.** `/ext/user_assets/<app>/` is undocumented — it was learned
+from the text of a 400. If `storage/list` on `/ext/user_assets` ever fails, fall back to
+unconditional upload, which is always correct because uploads are idempotent overwrites.
+That keeps a firmware change from breaking the tool; it only makes it chattier.
 
 ---
 
@@ -391,14 +402,14 @@ from the local cache.
 | Section | Change |
 |---|---|
 | §3 | Replace all examples with §2 of this document. Drop design goal 1's `-m` framing; the fast common case is `busy text "…"`. |
-| §4 | `cmd/image.rs` → merged into `cmd/draw.rs`. Add `cmd/draw.rs`. Add `state.rs` for the asset hash cache. |
-| §5 | Add a fourth silent-failure mode — draw referencing a missing asset — pending the Phase 0 probe. |
+| §4 | `cmd/image.rs` → merged into `cmd/draw.rs`. Add `cmd/draw.rs`. No `state.rs` — sync is device-authoritative (§5.5). |
+| §5 | No fourth silent-failure mode: a draw referencing a missing asset returns a 400 naming the path (§5.4). Add the two `storage` quirks instead. |
 | §5.3 | `--id` defaults per resolved input (§3.4); `--id` is an error for templates and `--file`. |
 | §6.1 | Delete `args_conflicts_with_subcommands` and the flattened `TextArgs`. Subcommand always required. |
 | §6.2 | Add `--opacity` to the shared surface. Add the post-resolution inert-flag check. |
 | §7 | Withdraw the `storage/write` conversion claim. Add strict undefined behaviour, `undeclared_variables`, and the include/import/extends rejection. |
 | §8 | Update the golden-payload test's command line. Add: resolution-order tests, inert-flag-is-an-error tests, a missing-required-variable test, and a stdin test. |
-| §9 | Phase 0 gains the probe. Phase 1 is `busy text`. Phase 3 ships `draw` with stock and asset resolution only. Phase 4 adds template resolution to the existing `draw`. |
+| §9 | Phase 0's probe is **done** (`scripts/probe-device.sh`, results in §5.4). Phase 1 is `busy text`. Phase 3 ships `draw` with stock and asset resolution only. Phase 4 adds template resolution to the existing `draw`. |
 
 The phase note is worth expanding, because `draw` spans two phases: it ships in Phase 3
 able to resolve stock paths and asset names, and Phase 4 inserts template lookup ahead
@@ -433,15 +444,14 @@ busy text -x 0 -y 8 --align mid_left --font small --color 0xFF0000FF "Goodbye, W
 | Strict undefined + `undeclared_variables` | The template declares its own requirements; no `[vars]` schema needed |
 | `validate` rejects include/import/extends | Static analysis would otherwise under-report requirements |
 | Images stay two-step | Auto-upload needs a filesystem shape rule that silently shadows uploaded assets |
-| Local hash cache, no Storage namespace | The Assets API has no list/read/per-file-delete; Storage reachability is unverified |
-| Probe in Phase 0 regardless | Ten minutes; de-risks a future move to Storage-backed sync |
+| Device-authoritative sync, no local state | The probe showed `storage/list` and `storage/read` reach `/ext/user_assets/<app>/`; querying is simpler than a cache and has no staleness modes |
+| `asset delete` stays all-or-nothing | Per-file `storage/remove` returns 400 on real asset paths and the file survives |
+| Fall back to unconditional upload if `storage/list` fails | The asset path is undocumented; uploads are idempotent, so degradation costs only chattiness |
 
 ---
 
 ## 8. Open, deliberately
 
-- **Probe results** (§5.4) are unrecorded until Phase 0 runs. The v1 implementation does
-  not depend on them.
 - **`busy status` output shape** — not designed here.
 - **Config file layout** — unchanged from architecture doc §6.5.
 - **Whether `DELETE`-then-`POST` visibly flickers** (§5.3 of the architecture doc) —
