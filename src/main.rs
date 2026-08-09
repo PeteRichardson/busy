@@ -1,4 +1,6 @@
 mod cli;
+mod color;
+mod device;
 
 use clap::Parser;
 
