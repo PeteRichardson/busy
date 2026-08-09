@@ -20,7 +20,7 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Draw a line of text
-    Text(TextArgs),
+    Text(Box<TextArgs>),
     /// Remove everything this application has drawn
     Clear,
 }
