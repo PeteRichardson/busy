@@ -6,14 +6,48 @@
 pub use busylib::model::assets::{
     Align, DisplayElement, DisplayElements, ElementKind, Font, Lifetime, Screen, TextElement,
 };
+// `ImageElement`/`ImageSource` have no caller until Task 6 wires `busy draw`
+// up to assets and stock paths.
+#[expect(
+    unused_imports,
+    reason = "no caller until Task 6 wires up `busy draw` for assets and stock paths"
+)]
+pub use busylib::model::assets::{ImageElement, ImageSource};
+pub use busylib::model::storage::StorageListElement;
 pub use busylib::types::app_name::AppName;
+// `AssetName` has no caller until Task 3 adds `busy asset upload`.
+#[expect(
+    unused_imports,
+    reason = "no caller until Task 3 adds `busy asset upload`"
+)]
+pub use busylib::types::asset_name::AssetName;
+// `AssetPath` has no caller until Task 6 wires `busy draw` up to assets.
+#[expect(
+    unused_imports,
+    reason = "no caller until Task 6 wires up `busy draw` for assets and stock paths"
+)]
+pub use busylib::types::asset_path::AssetPath;
 pub use busylib::types::color::Color;
 pub use busylib::types::element_id::ElementId;
+// `Opacity` has no caller until Task 6 wires `busy draw` up to assets and
+// stock paths.
+#[expect(
+    unused_imports,
+    reason = "no caller until Task 6 wires up `busy draw` for assets and stock paths"
+)]
+pub use busylib::types::opacity::Opacity;
 pub use busylib::types::priority::Priority;
+// `StockPath` has no caller until Task 6 wires `busy draw` up to stock paths.
+#[expect(
+    unused_imports,
+    reason = "no caller until Task 6 wires up `busy draw` for assets and stock paths"
+)]
+pub use busylib::types::stock_path::StockPath;
 pub use busylib::types::text::Text;
 
 use std::time::Duration;
 
+use busylib::types::storage_path::StoragePath;
 use busylib::{ApiPrefix, Client, ClientBuilder, ReqwestHttpTransport};
 use http::StatusCode;
 
@@ -66,6 +100,48 @@ impl Device {
         self.client
             .assets()
             .clear(Some(self.app.clone()))
+            .await
+            .map_err(|error| map_error(error, None))
+    }
+
+    /// Write one asset into this application's directory. Overwrites in place.
+    #[expect(dead_code, reason = "no caller until Task 3 adds `busy asset upload`")]
+    pub async fn upload(&self, file: &str, bytes: Vec<u8>) -> Result<(), CliError> {
+        self.client
+            .assets()
+            .upload(self.app.clone(), file, bytes)
+            .await
+            .map_err(|error| map_error(error, None))
+    }
+
+    /// This application's assets, newest listing from the device itself.
+    ///
+    /// App assets live at `/ext/user_assets/<application_name>/` — undocumented,
+    /// learned from the text of a 400. `DELETE assets/upload` removes the
+    /// directory rather than emptying it, so a 400 here means "no assets"
+    /// rather than a failure.
+    #[expect(dead_code, reason = "no caller until Task 4 adds `busy asset list`")]
+    pub async fn list_assets(&self) -> Result<Vec<StorageListElement>, CliError> {
+        let path = format!("/ext/user_assets/{}", self.app);
+        let path = StoragePath::new(path)
+            .map_err(|error| CliError::runtime(format!("invalid asset path: {error}")))?;
+
+        match self.client.storage().list(path).await {
+            Ok(entries) => Ok(entries),
+            Err(error) if error.is_status(StatusCode::BAD_REQUEST) => Ok(Vec::new()),
+            Err(error) => Err(map_error(error, None)),
+        }
+    }
+
+    /// Delete every asset belonging to this application.
+    ///
+    /// All-or-nothing: the API offers no per-file delete. `storage/remove`
+    /// returns 400 on a real asset path and the file survives — measured.
+    #[expect(dead_code, reason = "no caller until Task 5 adds `busy asset delete`")]
+    pub async fn delete_assets(&self) -> Result<(), CliError> {
+        self.client
+            .assets()
+            .delete(self.app.clone())
             .await
             .map_err(|error| map_error(error, None))
     }
