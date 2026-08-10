@@ -6,13 +6,13 @@
 pub use busylib::model::assets::{
     Align, DisplayElement, DisplayElements, ElementKind, Font, Lifetime, Screen, TextElement,
 };
-// `ImageElement`/`ImageSource` have no caller until Task 6 wires `busy draw`
-// up to assets and stock paths.
+// `ImageElement` has no caller until Task 6 wires `busy draw` up to assets
+// and stock paths.
 #[expect(
     unused_imports,
     reason = "no caller until Task 6 wires up `busy draw` for assets and stock paths"
 )]
-pub use busylib::model::assets::{ImageElement, ImageSource};
+pub use busylib::model::assets::ImageElement;
 pub use busylib::model::storage::StorageListElement;
 pub use busylib::types::app_name::AppName;
 // `AssetName` has no caller until Task 3 adds `busy asset upload`.
