@@ -24,13 +24,26 @@ impl Emitter {
         Ok(())
     }
 
-    pub fn success(&self, summary: &str, payload: &DisplayElements) -> Result<(), CliError> {
+    /// Report success. `payload` is the wire body when the command sent one
+    /// (e.g. `text`); commands with nothing to echo back (e.g. `clear`) pass
+    /// `None` and the `"payload"` key is simply omitted, so every command's
+    /// `--json` output shares one envelope rather than each inventing its own.
+    pub fn success(
+        &self,
+        summary: &str,
+        payload: Option<&DisplayElements>,
+    ) -> Result<(), CliError> {
         if self.json {
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "ok": true,
                 "summary": summary,
-                "payload": payload,
             });
+            if let Some(payload) = payload {
+                let payload = serde_json::to_value(payload).map_err(|error| {
+                    CliError::runtime(format!("could not serialize output: {error}"))
+                })?;
+                body["payload"] = payload;
+            }
             let json = serde_json::to_string_pretty(&body).map_err(|error| {
                 CliError::runtime(format!("could not serialize output: {error}"))
             })?;

@@ -63,8 +63,12 @@ async fn run(cli: &Cli, emitter: Emitter) -> Result<(), CliError> {
             }
             device.draw(&payload).await?;
 
-            emitter.success("drawn", &payload)
+            emitter.success("drawn", Some(&payload))
         }
-        Command::Clear => Err(CliError::runtime("`busy clear` arrives in Task 12")),
+        Command::Clear => {
+            let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
+            let device = device::Device::connect(&settings)?;
+            cmd::clear::run(&device, &settings.app, emitter, cli.global.dry_run).await
+        }
     }
 }
