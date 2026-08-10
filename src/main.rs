@@ -4,6 +4,7 @@ mod color;
 mod config;
 mod device;
 mod error;
+mod input;
 mod output;
 mod sanitize;
 mod validate;
@@ -39,9 +40,7 @@ async fn run(cli: &Cli, emitter: Emitter) -> Result<(), CliError> {
     match &cli.command {
         Command::Text(args) => {
             let settings = config::resolve(&cli.global, &args.style, &env, &file)?;
-            // Task 11 replaces this with `input::read_message(&args.message)?`,
-            // which adds `-` for stdin.
-            let message = args.message.clone();
+            let message = input::read_message(&args.message)?;
 
             let payload = cmd::text::build_payload(args, &settings, &file, &message)?;
 
