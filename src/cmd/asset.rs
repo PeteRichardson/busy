@@ -131,15 +131,28 @@ pub async fn delete(
 ) -> Result<(), CliError> {
     let device = Device::connect(settings)?;
     let entries = device.list_assets().await?;
-    let names: Vec<&str> = entries
-        .iter()
-        .filter(|entry| !entry.is_dir())
-        .map(|entry| entry.name())
-        .collect();
 
-    if names.is_empty() {
+    // `storage/list` is a generic directory browse, so it can in principle
+    // return `Dir` entries here too. `delete_assets` removes the whole
+    // `/ext/user_assets/<app>/` tree regardless of what's in it, so a
+    // directory entry is still something that gets destroyed — it must count
+    // toward "is there anything to delete" and appear in the manifest, or the
+    // confirmation would understate (or, for an app holding only a
+    // subdirectory, entirely miss) what is about to be wiped.
+    if entries.is_empty() {
         return emitter.success(&format!("no assets for `{}`", settings.app), None);
     }
+
+    let names: Vec<String> = entries
+        .iter()
+        .map(|entry| {
+            if entry.is_dir() {
+                format!("{}/", entry.name())
+            } else {
+                entry.name().to_owned()
+            }
+        })
+        .collect();
 
     let summary = format!(
         "this deletes ALL {} asset(s) for `{}`: {}",
@@ -158,13 +171,12 @@ pub async fn delete(
                 "{summary}\nRefusing to delete without confirmation. Re-run with --yes."
             )));
         }
-        emitter.warn_always(&summary);
-        eprint!("Delete them? [y/N] ");
+        confirm_prompt(&mut std::io::stderr(), emitter, &summary);
         let mut answer = String::new();
         std::io::stdin()
             .read_line(&mut answer)
             .map_err(|error| CliError::usage(format!("could not read confirmation: {error}")))?;
-        if !matches!(answer.trim(), "y" | "Y" | "yes" | "Yes") {
+        if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
             return emitter.success("cancelled", None);
         }
     } else {
@@ -173,4 +185,78 @@ pub async fn delete(
 
     device.delete_assets().await?;
     emitter.success(&format!("deleted {} asset(s)", names.len()), None)
+}
+
+/// Announce the manifest, then the y/N prompt, on `out` — in that order,
+/// always. Split out of `delete` so this ordering is regression-testable
+/// without a real pty: `delete` only reaches this once `stdin` is a
+/// terminal, which the process-spawning integration tests can never provide
+/// (their child always gets a piped stdin).
+///
+/// `Emitter::warn_always` alone does not guarantee the ordering: under
+/// `--json` it buffers `summary` for the final JSON document instead of
+/// printing it, so without the explicit echo here an interactive `--json`
+/// caller would see a bare "Delete them?" and answer blind — exactly the
+/// defect this closes. Outside `--json`, `warn_always` already printed the
+/// manifest immediately, so the explicit echo is skipped there or the line
+/// would double up.
+fn confirm_prompt(out: &mut impl std::io::Write, emitter: &Emitter, summary: &str) {
+    emitter.warn_always(summary);
+    if emitter.json {
+        let _ = writeln!(out, "{summary}");
+    }
+    let _ = write!(out, "Delete them? [y/N] ");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::confirm_prompt;
+    use crate::output::Emitter;
+
+    #[test]
+    fn confirm_prompt_writes_the_manifest_before_the_prompt_under_json() {
+        // The interactive y/N branch can only run against a real terminal,
+        // which tests/asset.rs's spawned children never have (piped stdin).
+        // This exercises the ordering property directly on the extracted
+        // helper instead: the manifest must land before the prompt is
+        // asked, in every mode, or a `--json` caller answers blind.
+        let emitter = Emitter::new(true, false);
+        let mut out = Vec::new();
+        confirm_prompt(
+            &mut out,
+            &emitter,
+            "this deletes ALL 1 asset(s) for `busy`: logo.png",
+        );
+        let written = String::from_utf8(out).expect("valid utf8");
+        let manifest_at = written
+            .find("logo.png")
+            .expect("the manifest must be written to the prompt stream");
+        let prompt_at = written
+            .find("Delete them?")
+            .expect("the prompt must be written");
+        assert!(
+            manifest_at < prompt_at,
+            "manifest must precede the prompt, got: {written:?}"
+        );
+    }
+
+    #[test]
+    fn confirm_prompt_does_not_double_the_manifest_outside_json() {
+        // Outside --json, `Emitter::warn_always` already prints the manifest
+        // immediately to the real stderr. The explicit writer here must
+        // carry only the prompt, or a human sees the file list twice.
+        let emitter = Emitter::new(false, false);
+        let mut out = Vec::new();
+        confirm_prompt(
+            &mut out,
+            &emitter,
+            "this deletes ALL 1 asset(s) for `busy`: logo.png",
+        );
+        let written = String::from_utf8(out).expect("valid utf8");
+        assert!(
+            !written.contains("logo.png"),
+            "must not duplicate the manifest outside --json, got: {written:?}"
+        );
+        assert!(written.contains("Delete them?"));
+    }
 }
