@@ -85,3 +85,56 @@ fn timeout_and_until_conflict() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
 }
+
+#[test]
+fn until_accepts_unix_seconds() {
+    let payload = stdout(&["--dry-run", "text", "--until", "1900000000", "hi"]);
+    // `Lifetime` is `#[serde(untagged)]` and flattened onto the element, and
+    // `display_until` is written through `serde_util::string_u64`, so it
+    // appears as a *string*, not a bare number.
+    assert!(
+        payload.contains(r#""display_until": "1900000000""#),
+        "got {payload}"
+    );
+}
+
+#[test]
+fn until_accepts_rfc_3339_and_agrees_with_the_equivalent_unix_seconds() {
+    // 1900000000 == 2030-03-17T17:46:40Z; making the two forms agree is a
+    // stronger check than asserting on either one in isolation.
+    let from_unix_seconds = stdout(&["--dry-run", "text", "--until", "1900000000", "hi"]);
+    let from_rfc_3339 = stdout(&["--dry-run", "text", "--until", "2030-03-17T17:46:40Z", "hi"]);
+    assert_eq!(from_unix_seconds, from_rfc_3339);
+    assert!(
+        from_rfc_3339.contains(r#""display_until": "1900000000""#),
+        "got {from_rfc_3339}"
+    );
+}
+
+#[test]
+fn until_before_1970_is_rejected() {
+    let output = busy()
+        .args(["--dry-run", "text", "--until", "1960-01-01T00:00:00Z", "hi"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--until") && stderr.contains("1970"),
+        "got {stderr}"
+    );
+}
+
+#[test]
+fn a_malformed_until_names_the_flag_and_the_accepted_forms() {
+    let output = busy()
+        .args(["--dry-run", "text", "--until", "nonsense", "hi"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--until") && stderr.contains("RFC 3339") && stderr.contains("Unix"),
+        "got {stderr}"
+    );
+}

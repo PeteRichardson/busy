@@ -509,10 +509,14 @@ mod tests {
     #[test]
     fn align_resolves_from_the_flag_then_the_file_then_nothing() {
         let empty = FileConfig::default();
+        // Deliberately distinct from both `Defaults::ALIGN` (Center) and the
+        // `top_left` used for the flag case below, so each assertion actually
+        // pins which layer won rather than being trivially satisfied by the
+        // default.
         let with_align = toml::from_str::<FileConfig>(
             r#"
             [defaults]
-            align = "center"
+            align = "bottom_mid"
             "#,
         )
         .unwrap();
@@ -521,7 +525,11 @@ mod tests {
         // `top_left`, but we deliberately override it with `Defaults::ALIGN`
         // when nothing else sets it.
         assert_eq!(super::resolve_align(None, &empty), Align::Center);
-        assert_eq!(super::resolve_align(None, &with_align), Align::Center);
+        assert_eq!(
+            super::resolve_align(None, &with_align),
+            Align::BottomMid,
+            "the config file must be consulted when no flag is given"
+        );
         assert_eq!(
             super::resolve_align(Some(AlignArg::TopLeft), &with_align),
             Align::TopLeft,
