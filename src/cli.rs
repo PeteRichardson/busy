@@ -49,11 +49,11 @@ pub struct GlobalArgs {
     pub http_timeout: Option<u64>,
 
     /// Emit machine-readable JSON
-    #[arg(long, global = true)]
+    #[arg(short, long, global = true)]
     pub json: bool,
 
     /// Print the payload that would be sent, and send nothing
-    #[arg(long, global = true)]
+    #[arg(short = 'n', long, global = true)]
     pub dry_run: bool,
 
     /// Suppress warnings
@@ -82,11 +82,11 @@ pub struct TextArgs {
 #[derive(Args, Debug, Clone, Default)]
 #[command(next_help_heading = "Style")]
 pub struct StyleArgs {
-    #[arg(long, value_enum)]
+    #[arg(short, long, value_enum)]
     pub font: Option<FontArg>,
 
     /// Colour: #RRGGBBAA, #RRGGBB, #RGB, 0x-prefixed, bare hex, or a name
-    #[arg(long)]
+    #[arg(short, long)]
     pub color: Option<String>,
 }
 
@@ -100,10 +100,10 @@ pub struct PlacementArgs {
     pub y: Option<i16>,
 
     /// Anchor point, used together with -x/-y rather than instead of them
-    #[arg(long, value_enum)]
+    #[arg(short, long, value_enum)]
     pub align: Option<AlignArg>,
 
-    #[arg(long, value_enum)]
+    #[arg(short, long, value_enum)]
     pub screen: Option<ScreenArg>,
 }
 
@@ -111,11 +111,11 @@ pub struct PlacementArgs {
 #[command(next_help_heading = "Scrolling")]
 pub struct ScrollArgs {
     /// Width of the label in pixels
-    #[arg(long)]
+    #[arg(short, long)]
     pub width: Option<u16>,
 
     /// Scroll rate in PIXELS PER MINUTE
-    #[arg(long)]
+    #[arg(short = 'r', long)]
     pub scroll_rate: Option<u32>,
 
     /// Milliseconds before scrolling starts
@@ -133,27 +133,27 @@ pub struct DeliveryArgs {
     /// 1-100, or low|normal|high|urgent (10|50|95|100). A draw is accepted only
     /// when its priority is >= the running app's: built-ins are 10, an active
     /// BUSY work session is 90.
-    #[arg(long)]
+    #[arg(short, long)]
     pub priority: Option<String>,
 
     /// Seconds the element stays on screen (0 = forever)
-    #[arg(long, conflicts_with = "until")]
+    #[arg(short, long, conflicts_with = "until")]
     pub timeout: Option<u32>,
 
     /// Hide the element at this time: RFC 3339, or Unix seconds
-    #[arg(long)]
+    #[arg(short, long)]
     pub until: Option<String>,
 
     /// Blink the status LED this colour
-    #[arg(long)]
+    #[arg(short, long)]
     pub led: Option<String>,
 
     /// Element id, so repeat invocations update in place instead of accumulating
-    #[arg(long)]
+    #[arg(short, long)]
     pub id: Option<String>,
 
     /// Compose onto what is already on screen instead of replacing it
-    #[arg(long)]
+    #[arg(short, long)]
     pub keep: bool,
 }
 

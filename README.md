@@ -4,11 +4,25 @@ An ergonomic CLI for the [BUSY Bar](https://busy.app).
 
 ```sh
 busy text "Hello, World!"
-busy text -x 0 -y 8 --align mid_left --font small --color red "Goodbye!"
-busy text --timeout 30 --priority urgent "deploy done"
+busy text -x 0 -y 8 -a mid_left -f small -c red "Goodbye!"
+busy text -t 30 -p urgent "deploy done"
 git log -1 --format=%s | busy text -
 busy clear
 ```
+
+Every per-invocation flag has a short form; the long form always works too.
+
+| | | | |
+|---|---|---|---|
+| `-c` `--color` | `-f` `--font` | `-a` `--align` | `-s` `--screen` |
+| `-x` `--x` | `-y` `--y` | `-w` `--width` | `-r` `--scroll-rate` |
+| `-p` `--priority` | `-t` `--timeout` | `-u` `--until` | `-l` `--led` |
+| `-i` `--id` | `-k` `--keep` | `-n` `--dry-run` | `-j` `--json` |
+
+`-q`/`--quiet` too. The connection options — `--addr`, `--app`, `--token`,
+`--api-prefix`, `--http-timeout` — are deliberately long-only: they are typed
+rarely, a global short is reserved across every subcommand, and a short
+`--token` would invite secrets into shell history and `ps`.
 
 ## Install
 
