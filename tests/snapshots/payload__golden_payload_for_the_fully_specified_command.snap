@@ -1,0 +1,21 @@
+---
+source: tests/payload.rs
+expression: payload
+---
+{
+  "application_name": "busy",
+  "priority": 95,
+  "elements": [
+    {
+      "id": "message",
+      "x": 0,
+      "y": 8,
+      "display": "front",
+      "align": "mid_left",
+      "type": "text",
+      "text": "Goodbye, World!",
+      "font": "small",
+      "color": "#FF0000FF"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+---
+source: tests/payload.rs
+expression: "stdout(&[\"--dry-run\", \"text\", \"Hello, World!\"])"
+---
+{
+  "application_name": "busy",
+  "priority": 95,
+  "elements": [
+    {
+      "id": "message",
+      "x": 0,
+      "y": 0,
+      "display": "front",
+      "type": "text",
+      "text": "Hello, World!",
+      "font": "large",
+      "color": "#FFFFFFFF"
+    }
+  ]
+}

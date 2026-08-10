@@ -1,0 +1,22 @@
+---
+source: tests/payload.rs
+expression: "stdout(&[\"--dry-run\", \"text\", \"--timeout\", \"30\", \"--led\", \"red\", \"--priority\",\n\"urgent\", \"deploy done\",])"
+---
+{
+  "application_name": "busy",
+  "priority": 100,
+  "led_notification_color": "#FF0000FF",
+  "elements": [
+    {
+      "id": "message",
+      "timeout": 30,
+      "x": 0,
+      "y": 0,
+      "display": "front",
+      "type": "text",
+      "text": "deploy done",
+      "font": "large",
+      "color": "#FFFFFFFF"
+    }
+  ]
+}
