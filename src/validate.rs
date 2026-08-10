@@ -79,40 +79,52 @@ pub fn bounds_warnings(payload: &DisplayElements) -> Vec<String> {
         //    five of the nine align values render a completely blank screen
         //    while the device still returns 200 OK. The anchor-point check
         //    above cannot see this, because (0,0) is in bounds.
-        let Some(align) = element.align else {
+        //
+        //    This only runs when align is known: a payload built from a
+        //    template file may legitimately omit it, and guessing a
+        //    direction to warn about would be worse than saying nothing.
+        //    When it does fire, the element is already known to render
+        //    nothing, so the width check below is skipped for it — a second,
+        //    unrelated-sounding warning about the same invisible element
+        //    would only be noise.
+        let mut already_invisible = false;
+        if let Some(align) = element.align {
+            let (dx, dy) = anchor_direction(align);
+
+            if dx < 0 && x == 0 {
+                warnings.push(format!(
+                    "element `{id}` uses align `{align:?}`, which anchors its right edge at \
+                     x={x}, so it extends off the left of the {screen_name} display and will \
+                     render nothing"
+                ));
+                already_invisible = true;
+            }
+            if dy < 0 && y == 0 {
+                warnings.push(format!(
+                    "element `{id}` uses align `{align:?}`, which anchors its bottom edge at \
+                     y={y}, so it extends off the top of the {screen_name} display and will \
+                     render nothing"
+                ));
+                already_invisible = true;
+            }
+        }
+        if already_invisible {
             continue;
-        };
-        let (dx, dy) = anchor_direction(align);
-
-        if dx < 0 && x == 0 {
-            warnings.push(format!(
-                "element `{id}` uses align `{align:?}`, which anchors its right edge at \
-                 x={x}, so it extends off the left of the {screen_name} display and will \
-                 render nothing"
-            ));
-        }
-        if dy < 0 && y == 0 {
-            warnings.push(format!(
-                "element `{id}` uses align `{align:?}`, which anchors its bottom edge at \
-                 y={y}, so it extends off the top of the {screen_name} display and will \
-                 render nothing"
-            ));
         }
 
-        // 3. Text that is probably too wide. The device clips silently at the
-        //    display edge and still returns 200 OK, so a long CI message loses
-        //    its tail — or, when centred, both its head and its tail.
+        // 3. Text that is probably too wide for the display outright. This is
+        //    a size comparison, not a position one — it does not need align,
+        //    so it runs whether or not align was set above — and it fires
+        //    only when the text itself would not fit the panel at any
+        //    position, not merely because of where this particular anchor
+        //    happens to place it. The device clips at the display edge and
+        //    still returns 200 OK, so a long CI message loses its tail — or,
+        //    when centred, both its head and its tail.
         if let ElementKind::Text(text) = &element.kind {
             let estimated =
                 (text.text.as_str().chars().count() as f32 * px_per_char(text.font)).round() as i16;
 
-            let (left, right) = match dx {
-                1 => (x, x + estimated),
-                -1 => (x - estimated, x),
-                _ => (x - estimated / 2, x + estimated / 2),
-            };
-
-            if text.scroll_rate.is_none() && (left < 0 || right > width) {
+            if text.scroll_rate.is_none() && estimated > width {
                 warnings.push(format!(
                     "element `{id}`'s text is about {estimated}px wide in font \
                      {:?}, which does not fit the {screen_name} display's {width}px; \
@@ -210,8 +222,13 @@ mod tests {
     fn a_right_anchor_at_x_zero_warns_even_though_the_point_is_in_bounds() {
         for align in [Align::TopRight, Align::MidRight, Align::BottomRight] {
             let warnings = bounds_warnings(&at(0, 8, Screen::Front, align));
+            assert_eq!(
+                warnings.len(),
+                1,
+                "{align:?} at x=0 should warn exactly once, got {warnings:?}"
+            );
             assert!(
-                warnings.iter().any(|w| w.contains("off the left")),
+                warnings[0].contains("off the left"),
                 "{align:?} at x=0 should warn, got {warnings:?}"
             );
         }
@@ -221,11 +238,28 @@ mod tests {
     fn a_bottom_anchor_at_y_zero_warns_even_though_the_point_is_in_bounds() {
         for align in [Align::BottomLeft, Align::BottomMid, Align::BottomRight] {
             let warnings = bounds_warnings(&at(36, 0, Screen::Front, align));
+            assert_eq!(
+                warnings.len(),
+                1,
+                "{align:?} at y=0 should warn exactly once, got {warnings:?}"
+            );
             assert!(
-                warnings.iter().any(|w| w.contains("off the top")),
+                warnings[0].contains("off the top"),
                 "{align:?} at y=0 should warn, got {warnings:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_invisible_element_gets_one_warning_not_a_contradictory_second_one() {
+        // Short text ("hi") at x=0 with `top_right`: the anchor-direction
+        // check already says this renders nothing. It must not also claim,
+        // falsely, that the text doesn't fit -- a few px easily fits in 72px.
+        // Regression case for the bug where the width check's own span math
+        // (not the text's actual width) triggered a second, false warning.
+        let warnings = bounds_warnings(&at(0, 8, Screen::Front, Align::TopRight));
+        assert_eq!(warnings.len(), 1, "got {warnings:?}");
+        assert!(warnings[0].contains("off the left"));
     }
 
     #[test]
@@ -246,14 +280,32 @@ mod tests {
             Screen::Front,
             Align::Center,
         ));
+        assert_eq!(warnings.len(), 1, "got {warnings:?}");
+        assert!(warnings[0].contains("clips silently"), "got {warnings:?}");
         assert!(
-            warnings.iter().any(|w| w.contains("clips silently")),
-            "got {warnings:?}"
-        );
-        assert!(
-            warnings.iter().any(|w| w.contains("--scroll-rate")),
+            warnings[0].contains("--scroll-rate"),
             "should point at the fix, got {warnings:?}"
         );
+    }
+
+    #[test]
+    fn missing_align_does_not_suppress_the_width_warning() {
+        // No `.align(..)` call at all: the align-direction check (case 2) has
+        // nothing to check, but the width check (case 3) is independent of
+        // align and must still run -- a payload built from a template file
+        // that omits align should still get an overflow warning.
+        let text = TextElement::new("Deployment completed OK", Font::Large).unwrap();
+        let element = DisplayElement::builder("message")
+            .unwrap()
+            .at(36, 8)
+            .screen(Screen::Front)
+            .text(text);
+        let payload = DisplayElements::new(AppName::new("busy").unwrap())
+            .unwrap()
+            .element(element);
+        let warnings = bounds_warnings(&payload);
+        assert_eq!(warnings.len(), 1, "got {warnings:?}");
+        assert!(warnings[0].contains("clips silently"), "got {warnings:?}");
     }
 
     #[test]
