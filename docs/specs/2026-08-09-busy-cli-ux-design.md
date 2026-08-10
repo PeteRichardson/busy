@@ -450,7 +450,80 @@ busy text -x 0 -y 8 --align mid_left --font small --color 0xFF0000FF "Goodbye, W
 
 ---
 
-## 8. Open, deliberately
+## 8. Rendering — measured on hardware
+
+Run against a physical bar (API 25.0.0) on 2026-08-10 by drawing known payloads and
+reading frames back through `GET /screen`. `GET /screen?display=0` returns the front
+panel as base64 RGB888 (72×16×3 = 3456 bytes); `display=1` returns the back panel as
+base64 4-bit greyscale (160×80÷2 = 6400 bytes), matching "16 greys".
+
+### 8.1 The device's implicit `align` is `top_left`
+
+Neither the OpenAPI document nor `busylib` supplies a default: `align` has no `default:`
+key in the schema — pointedly, since its siblings `display` and `x`/`y` do — and
+`busylib` models it as `Option<Align>` with `skip_serializing_if`, so an unset value is
+simply absent from the JSON.
+
+Drawing the same text at `(0,0)` with the key omitted produces a frame byte-identical to
+`align: "top_left"`. **The device defaults to `top_left`.** This is now asserted by
+`scripts/probe-device.sh`, so a firmware change to it will be caught rather than quietly
+shifting every unspecified layout.
+
+### 8.2 `align` decides whether the element is visible at all
+
+`align` picks *which point of the element* sits at `(x, y)`, so it governs the direction
+the element extends. At `(0,0)`, five of the nine values render **nothing** — a frame
+byte-identical to a cleared screen — while the device still returns `200 OK`:
+
+| `align` at (0,0) | Result |
+|---|---|
+| `top_left` (and omitted) | fully visible |
+| `top_mid`, `mid_left`, `center` | partly visible |
+| `top_right`, `mid_right`, `bottom_left`, `bottom_mid`, `bottom_right` | **blank** |
+
+This is a distinct failure mode from an out-of-bounds anchor, and a bounds check that
+only tests the anchor point is blind to it, because `(0,0)` is in bounds. The CLI warns
+on it locally (plan Task 6).
+
+### 8.3 Text is clipped silently when it overflows
+
+Approximate inked width per character, measured by drawing known strings:
+
+| Font | px/char | Chars fitting the 72px front panel |
+|---|---|---|
+| `tiny` | ~2.6 | ~27 |
+| `small` | ~3.2 | ~22 |
+| `large` (default) | ~5.4 | **~13** |
+
+`Hello, World!` in `large` inks 70px and fits with 2px to spare; `Build Failed!` inks
+68px. `Deployment completed OK` runs past the right edge, and the device clips it
+silently with a `200 OK` — no error, no ellipsis, just a half-drawn glyph. Centred, an
+overlong message loses both its head and its tail. The CLI estimates the width and warns,
+pointing at `--width`/`--scroll-rate`.
+
+### 8.4 CLI defaults: centre of the display
+
+The CLI overrides the device's `top_left` with **`align = center`**, anchored at the
+centre of whichever panel is selected — `(36, 8)` on the front, `(80, 40)` on the back.
+The goal is that the zero-argument case, `busy text "hi"`, looks deliberate rather than
+merely correct.
+
+Verified on hardware at `(36, 8)`: `Hi` centres at x 30–40, `Build Failed!` at x 2–69,
+and `Hello, World!` at x 1–70, with descenders (`gjpqy`) clearing the bottom edge. This
+also sidesteps §8.2 entirely, since the default anchor is nowhere near an edge.
+
+Two consequences, both accepted:
+
+- An overlong message now clips at **both** ends rather than just the tail, which makes
+  the §8.3 warning load-bearing rather than a nicety.
+- `busy` now sends `align` explicitly where §2's original design omitted it. That
+  omission was correct while the device's behaviour was unknown; it has been measured,
+  and a deliberate default beats an undocumented one. The architecture doc's own example
+  config already showed `align = "center"`, so the two now agree.
+
+---
+
+## 9. Open, deliberately
 
 - **`busy status` output shape** — not designed here.
 - **Config file layout** — unchanged from architecture doc §6.5.

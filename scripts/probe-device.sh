@@ -59,7 +59,21 @@ curl -s -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BAR/display/dra
 say "8. stock assets"
 curl -s -H "$AUTH" "$BAR/storage/list?path=/ext/apps_assets/shared/images" | head -c 400; echo
 
-say "9. cleanup — delete-all, then list (expect 400: the directory itself is gone)"
+say "9. implicit align — expect the no-align frame to equal top_left"
+frame() {
+  curl -s -H "$AUTH" -X DELETE "$BAR/display/draw?application_name=$APP" >/dev/null
+  curl -s -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BAR/display/draw" \
+    -d "{\"application_name\":\"$APP\",\"priority\":95,\"elements\":[{\"id\":\"a\",\"type\":\"text\",\"text\":\"Xy\",\"font\":\"small\",\"x\":0,\"y\":0$1}]}" >/dev/null
+  sleep 0.8
+  curl -s -H "$AUTH" "$BAR/screen?display=0" | shasum -a 256 | cut -c1-16
+}
+none=$(frame "")
+tl=$(frame ",\"align\":\"top_left\"")
+printf '  omitted=%s top_left=%s -> %s\n' "$none" "$tl" \
+  "$([ "$none" = "$tl" ] && echo 'MATCH (device default is top_left)' || echo 'CHANGED — the device default is no longer top_left')"
+curl -s -H "$AUTH" -X DELETE "$BAR/display/draw?application_name=$APP" >/dev/null
+
+say "10. cleanup — delete-all, then list (expect 400: the directory itself is gone)"
 curl -s -H "$AUTH" -X DELETE "$BAR/display/draw?application_name=$APP"; echo
 curl -s -H "$AUTH" -X DELETE "$BAR/assets/upload?application_name=$APP"; echo
 curl -s -H "$AUTH" "$BAR/storage/list?path=/ext/user_assets/$APP"; echo
