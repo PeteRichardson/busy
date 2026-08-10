@@ -905,8 +905,10 @@ mod tests {
 
     #[test]
     fn the_config_file_beats_the_built_in_defaults() {
+        // Two hashes, not one: this fixture contains `"#00ff00ff"`, and the
+        // `"#` in it would otherwise terminate an `r#"…"#` literal early.
         let file = toml::from_str::<FileConfig>(
-            r#"
+            r##"
             addr = "http://192.168.1.9"
             app = "ci"
             [defaults]
@@ -914,7 +916,7 @@ mod tests {
             align = "center"
             color = "#00ff00ff"
             priority = 50
-            "#,
+            "##,
         )
         .expect("valid config");
 
