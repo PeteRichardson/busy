@@ -3,40 +3,18 @@
 //! Everything else imports the model and value types from here, so an upstream
 //! module reshuffle is a one-file fix rather than a shotgun edit.
 
+pub use busylib::model::assets::ImageElement;
 pub use busylib::model::assets::{
     Align, DisplayElement, DisplayElements, ElementKind, Font, Lifetime, Screen, TextElement,
 };
-// `ImageElement` has no caller until Task 6 wires `busy draw` up to assets
-// and stock paths.
-#[expect(
-    unused_imports,
-    reason = "no caller until Task 6 wires up `busy draw` for assets and stock paths"
-)]
-pub use busylib::model::assets::ImageElement;
 pub use busylib::model::storage::StorageListElement;
 pub use busylib::types::app_name::AppName;
 pub use busylib::types::asset_name::AssetName;
-// `AssetPath` has no caller until Task 6 wires `busy draw` up to assets.
-#[expect(
-    unused_imports,
-    reason = "no caller until Task 6 wires up `busy draw` for assets and stock paths"
-)]
 pub use busylib::types::asset_path::AssetPath;
 pub use busylib::types::color::Color;
 pub use busylib::types::element_id::ElementId;
-// `Opacity` has no caller until Task 6 wires `busy draw` up to assets and
-// stock paths.
-#[expect(
-    unused_imports,
-    reason = "no caller until Task 6 wires up `busy draw` for assets and stock paths"
-)]
 pub use busylib::types::opacity::Opacity;
 pub use busylib::types::priority::Priority;
-// `StockPath` has no caller until Task 6 wires `busy draw` up to stock paths.
-#[expect(
-    unused_imports,
-    reason = "no caller until Task 6 wires up `busy draw` for assets and stock paths"
-)]
 pub use busylib::types::stock_path::StockPath;
 pub use busylib::types::text::Text;
 

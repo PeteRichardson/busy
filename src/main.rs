@@ -88,7 +88,27 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
                 }
             }
         }
-        Command::Draw(_) => Err(CliError::runtime("`busy draw` arrives in Task 6")),
+        Command::Draw(args) => {
+            let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
+            let resolved = cmd::draw::resolve(args)?;
+            let payload = cmd::draw::build_payload(args, &settings, &file, &resolved)?;
+
+            for warning in validate::bounds_warnings(&payload) {
+                emitter.warn(&warning);
+            }
+
+            if cli.global.dry_run {
+                return emitter.dry_run(&payload);
+            }
+
+            let device = device::Device::connect(&settings)?;
+            if !args.delivery.keep {
+                device.clear().await?;
+            }
+            device.draw(&payload).await?;
+
+            emitter.success("drawn", Some(&payload))
+        }
         Command::Clear => {
             let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
             cmd::clear::run(&settings, emitter, cli.global.dry_run).await

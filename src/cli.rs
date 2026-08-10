@@ -32,11 +32,35 @@ pub enum Command {
     Clear,
 }
 
-/// Filled in by Task 6, which wires `busy draw` up to assets and stock paths.
 #[derive(Args, Debug, Clone, Default)]
 pub struct DrawArgs {
     /// Asset name, or a `shared/…` device built-in
     pub name: Option<String>,
+
+    /// Draw a raw DisplayElements payload from a file instead of a named thing
+    #[arg(long, conflicts_with = "name")]
+    pub file: Option<PathBuf>,
+
+    /// Force how the name is interpreted, for pathological cases
+    #[arg(long = "as", value_enum)]
+    pub as_kind: Option<AsArg>,
+
+    /// Opacity, 0-100
+    #[arg(short = 'o', long)]
+    pub opacity: Option<u8>,
+
+    #[command(flatten)]
+    pub placement: PlacementArgs,
+
+    #[command(flatten)]
+    pub delivery: DeliveryArgs,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+#[value(rename_all = "snake_case")]
+pub enum AsArg {
+    Image,
+    Stock,
 }
 
 #[derive(Subcommand, Debug)]

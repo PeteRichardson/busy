@@ -1,0 +1,19 @@
+---
+source: tests/draw.rs
+expression: "stdout(&[\"--dry-run\", \"draw\", \"shared/checkmark_front_8x8.image\"])"
+---
+{
+  "application_name": "busy",
+  "priority": 95,
+  "elements": [
+    {
+      "id": "image",
+      "x": 36,
+      "y": 8,
+      "display": "front",
+      "align": "center",
+      "type": "image",
+      "stock_path": "shared/checkmark_front_8x8.image"
+    }
+  ]
+}

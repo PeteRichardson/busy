@@ -1,0 +1,20 @@
+---
+source: tests/draw.rs
+expression: "stdout(&[\"--dry-run\", \"draw\", \"logo.png\", \"--opacity\", \"50\"])"
+---
+{
+  "application_name": "busy",
+  "priority": 95,
+  "elements": [
+    {
+      "id": "image",
+      "x": 36,
+      "y": 8,
+      "display": "front",
+      "align": "center",
+      "type": "image",
+      "path": "logo.png",
+      "opacity": 50
+    }
+  ]
+}
