@@ -8,7 +8,10 @@ use crate::device::Color;
 
 /// Named colours the CLI understands, as `#RRGGBB`.
 /// Used by the parse function.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires parse into main")
+)]
 const NAMES: &[(&str, u32)] = &[
     ("red", 0xFF0000),
     ("green", 0x00FF00),
@@ -23,7 +26,10 @@ const NAMES: &[(&str, u32)] = &[
 
 /// Parse a colour string into a validated Color.
 /// This function is used by the CLI command handlers and is tested separately.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires this into main")
+)]
 pub fn parse(input: &str) -> Result<Color, String> {
     let trimmed = input.trim();
 
@@ -60,7 +66,13 @@ pub fn parse(input: &str) -> Result<Color, String> {
 
 /// Format an error message for invalid colour input.
 /// Used by the parse function and its tests.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "only called from parse, itself uncalled until Task 5"
+    )
+)]
 fn invalid(input: &str) -> String {
     format!(
         "invalid colour `{input}`: expected #RRGGBBAA, #RRGGBB, #RGB, a 0x-prefixed \

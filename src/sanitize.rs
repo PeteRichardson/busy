@@ -5,7 +5,13 @@
 //! so the CLI fixes what it can and warns once about what it changed.
 
 /// The result of sanitizing, and whether anything was altered.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "no caller until Task 5 wires to_ascii into the send path"
+    )
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sanitized {
     pub text: String,
@@ -14,7 +20,13 @@ pub struct Sanitized {
 
 /// Transliterate `input` into printable ASCII, dropping what can't be mapped.
 /// Not yet called outside tests; Task 5 wires it into the send path.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "no caller until Task 5 wires this into the send path"
+    )
+)]
 pub fn to_ascii(input: &str) -> Sanitized {
     let mut text = String::with_capacity(input.len());
     let mut changed = false;

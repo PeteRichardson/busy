@@ -4,6 +4,14 @@
 //! `Defaults`. `resolve` takes every layer as a value rather than reading the
 //! process environment, which keeps the tests deterministic under parallelism
 //! and leaves one obvious seam for the template layer to slot into later.
+//!
+//! Most items in this file have no caller until Task 5 wires `resolve` and
+//! `load_file` into `main`; until then they're exercised directly by this
+//! file's own tests. Those items carry `#[expect(dead_code)]` rather than
+//! `#[allow(dead_code)]` so the annotation self-destructs: the moment Task 5
+//! gives an item a caller, `cargo clippy` turns the now-unnecessary
+//! `#[expect]` into an `unfulfilled_lint_expectations` error, forcing its
+//! removal instead of leaving it as permanent scar tissue.
 
 use std::path::PathBuf;
 
@@ -15,17 +23,20 @@ use crate::color;
 use crate::device::{Align, Color, Font, Screen};
 
 /// Built-in fallbacks. The single place a default value may be written.
-// Never instantiated as a value (it's a bag of associated consts) and, until
-// Task 5 wires `resolve` into `main`, unreachable from the binary's `main`
-// too. `ELEMENT_ID` additionally has no reader anywhere yet — Task 5 is what
-// attaches a default element id to the outgoing payload.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires resolve into main")
+)]
 pub struct Defaults;
 
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires resolve into main")
+)]
 impl Defaults {
     pub const ADDR: &'static str = "http://10.0.4.20";
     pub const APP: &'static str = "busy";
+    pub const API_PREFIX: PrefixArg = PrefixArg::Device;
     pub const HTTP_TIMEOUT_MS: u64 = 5000;
     pub const FONT: Font = Font::Large;
     pub const COLOR: Color = Color::rgba(0xff, 0xff, 0xff, 0xff);
@@ -33,13 +44,20 @@ impl Defaults {
     /// 95 beats an active BUSY work session at 90. The device's own default is
     /// 50, which loses exactly when the user is at their desk.
     pub const PRIORITY: u8 = 95;
+    // Unlike its siblings, not even read by this file's own tests yet —
+    // Task 5 is what attaches a default element id to the outgoing payload.
+    #[expect(
+        dead_code,
+        reason = "no reader anywhere until Task 5 attaches an element id"
+    )]
     pub const ELEMENT_ID: &'static str = "message";
 }
 
 /// Values read from the environment. Constructed literally in tests.
-// No caller until Task 5 wires `resolve` (and thus `Env::from_process`) into
-// `main`.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires resolve into main")
+)]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Env {
     pub addr: Option<String>,
@@ -50,8 +68,7 @@ pub struct Env {
 impl Env {
     /// Reads the real process environment, so no test may call this: the
     /// suite runs in parallel and every other test builds `Env` literally.
-    /// Unused until Task 5 wires `resolve` into `main`.
-    #[allow(dead_code)]
+    #[expect(dead_code, reason = "no caller until Task 5 wires resolve into main")]
     pub fn from_process() -> Self {
         Self {
             addr: std::env::var("BUSY_ADDR").ok(),
@@ -61,9 +78,10 @@ impl Env {
     }
 }
 
-/// No caller until Task 5 wires `load_file`/`resolve` into `main`; today it's
-/// only constructed directly by this file's own tests.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires resolve into main")
+)]
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct FileConfig {
@@ -75,9 +93,10 @@ pub struct FileConfig {
     pub defaults: FileDefaults,
 }
 
-/// Same story as `FileConfig`: no caller outside this file's tests until
-/// Task 5.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires resolve into main")
+)]
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct FileDefaults {
@@ -88,9 +107,16 @@ pub struct FileDefaults {
     pub priority: Option<u8>,
 }
 
-/// Everything a command needs after all four layers have been applied.
-/// No caller until Task 5 wires `resolve` into `main`.
-#[allow(dead_code)]
+/// The file-and-default layer for every setting a command needs, computed
+/// from `GlobalArgs`, `StyleArgs`, `Env`, and `FileConfig` alone. `resolve`
+/// never sees `PlacementArgs` or `DeliveryArgs`, so `screen` and `priority`
+/// here reflect only the config file and built-in defaults — callers must
+/// still layer the `--screen`/`--priority` flags on top themselves, exactly
+/// as they must for `align` via `resolve_align`.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires resolve into main")
+)]
 #[derive(Debug, Clone)]
 pub struct Settings {
     pub addr: String,
@@ -100,16 +126,14 @@ pub struct Settings {
     pub http_timeout_ms: u64,
     pub font: Font,
     pub color: Color,
-    // Not yet read even by this file's own tests: no test asserts on the
-    // resolved screen. Task 7 is what actually selects a screen on the
-    // device.
-    #[allow(dead_code)]
+    // Stays dead through Task 7, which is what actually selects a screen on
+    // the device; no test asserts on it either.
+    #[cfg_attr(test, expect(dead_code, reason = "stays dead until Task 7 reads it"))]
     pub screen: Screen,
     pub priority: u8,
 }
 
-/// No caller until Task 5 wires `load_file` into `main`.
-#[allow(dead_code)]
+#[expect(dead_code, reason = "no caller until Task 5 wires load_file into main")]
 pub fn config_path() -> Option<PathBuf> {
     let strategy = etcetera::choose_base_strategy().ok()?;
     Some(strategy.config_dir().join("busy").join("config.toml"))
@@ -120,9 +144,7 @@ pub fn config_path() -> Option<PathBuf> {
 /// A missing file is not an error. An unreadable or malformed one is reported
 /// as a warning and treated as absent, so a typo in the config never stops a
 /// notification from reaching the bar.
-///
-/// No caller until Task 5 wires this into `main`.
-#[allow(dead_code)]
+#[expect(dead_code, reason = "no caller until Task 5 wires this into main")]
 pub fn load_file() -> (FileConfig, Vec<String>) {
     let mut warnings = Vec::new();
 
@@ -157,8 +179,10 @@ pub fn load_file() -> (FileConfig, Vec<String>) {
     }
 }
 
-// Only called from `load_file`, which itself has no caller until Task 5.
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "only called from load_file, itself uncalled until Task 5"
+)]
 #[cfg(unix)]
 fn world_readable_mode(path: &std::path::Path) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt as _;
@@ -166,15 +190,19 @@ fn world_readable_mode(path: &std::path::Path) -> Option<u32> {
     (mode & 0o004 != 0).then_some(mode & 0o777)
 }
 
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "only called from load_file, itself uncalled until Task 5"
+)]
 #[cfg(not(unix))]
 fn world_readable_mode(_path: &std::path::Path) -> Option<u32> {
     None
 }
 
-/// No caller until Task 5 wires this into `main`; exercised directly by this
-/// file's own tests today.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires this into main")
+)]
 pub fn resolve(
     global: &GlobalArgs,
     style: &StyleArgs,
@@ -243,7 +271,7 @@ pub fn resolve(
         addr,
         app,
         token,
-        api_prefix: global.api_prefix.unwrap_or(PrefixArg::Device),
+        api_prefix: global.api_prefix.unwrap_or(Defaults::API_PREFIX),
         http_timeout_ms,
         font,
         color,
@@ -255,10 +283,10 @@ pub fn resolve(
 /// Align is resolved separately because the flag lives on `PlacementArgs`
 /// rather than `StyleArgs`, and because the API defines no default for it —
 /// when nothing sets it, the field is omitted and the device decides.
-///
-/// No caller until Task 5 wires this into `main`; exercised directly by this
-/// file's own tests today.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires this into main")
+)]
 pub fn resolve_align(flag: Option<AlignArg>, file: &FileConfig) -> Option<Align> {
     if let Some(align) = flag {
         return Some(align_from_arg(align));
@@ -269,9 +297,10 @@ pub fn resolve_align(flag: Option<AlignArg>, file: &FileConfig) -> Option<Align>
         .and_then(|name| parse_enum::<Align>(name, "align").ok())
 }
 
-/// No caller in `main` until Task 5 wires `--priority` parsing into the
-/// command path; exercised directly by this file's own tests today.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires this into main")
+)]
 pub fn parse_priority(input: &str) -> Result<u8, String> {
     match input.to_ascii_lowercase().as_str() {
         "low" => return Ok(10),
@@ -289,9 +318,13 @@ pub fn parse_priority(input: &str) -> Result<u8, String> {
     }
 }
 
-/// Only called from `parse_priority`, which itself has no caller in `main`
-/// until Task 5.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "only called from parse_priority, itself uncalled until Task 5"
+    )
+)]
 fn invalid_priority(input: &str) -> String {
     format!(
         "invalid priority `{input}`: expected 1-100, or one of low, normal, high, urgent \
@@ -304,10 +337,13 @@ fn invalid_priority(input: &str) -> String {
 ///
 /// This routes through the CLI's own `*Arg` enums because the `busylib` types
 /// do not implement `clap::ValueEnum` and are not ours to change.
-///
-/// No caller in `main` until Task 5 wires `resolve`/`resolve_align` in;
-/// reached through those functions in this file's own tests today.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "no caller until Task 5 wires resolve/resolve_align into main"
+    )
+)]
 fn parse_enum<T: FromArgName>(value: &str, label: &str) -> Result<T, String> {
     T::from_arg_name(value).ok_or_else(|| {
         format!(
@@ -317,9 +353,11 @@ fn parse_enum<T: FromArgName>(value: &str, label: &str) -> Result<T, String> {
     })
 }
 
-/// No caller in `main` until Task 5; implemented for `Font`, `Align`, and
-/// `Screen` below and exercised through `parse_enum` in this file's tests.
-#[allow(dead_code)]
+/// Implemented for `Font`, `Align`, and `Screen` below.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires this into main")
+)]
 pub trait FromArgName: Sized {
     fn from_arg_name(value: &str) -> Option<Self>;
     fn accepted() -> Vec<&'static str>;
@@ -374,9 +412,10 @@ impl FromArgName for Screen {
     }
 }
 
-/// No caller in `main` until Task 5; reached through `resolve` in this
-/// file's own tests today.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires resolve into main")
+)]
 pub fn font_from_arg(arg: FontArg) -> Font {
     match arg {
         FontArg::Tiny => Font::Tiny,
@@ -390,9 +429,13 @@ pub fn font_from_arg(arg: FontArg) -> Font {
     }
 }
 
-/// No caller in `main` until Task 5; reached through `resolve_align` in this
-/// file's own tests today.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "no caller until Task 5 wires resolve_align into main"
+    )
+)]
 pub fn align_from_arg(arg: AlignArg) -> Align {
     match arg {
         AlignArg::TopLeft => Align::TopLeft,
@@ -407,9 +450,10 @@ pub fn align_from_arg(arg: AlignArg) -> Align {
     }
 }
 
-/// No caller in `main` until Task 5; reached through `resolve` in this
-/// file's own tests today.
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "no caller until Task 5 wires resolve into main")
+)]
 pub fn screen_from_arg(arg: ScreenArg) -> Screen {
     match arg {
         ScreenArg::Front => Screen::Front,
