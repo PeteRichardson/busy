@@ -26,6 +26,17 @@ async fn a_plain_draw_clears_first() {
         .expect("should run");
     assert!(output.status.success());
     // MockServer verifies the .expect() counts when it drops.
+
+    // The counts above only prove one of each arrived; a POST-then-DELETE
+    // regression would pass them too, and would wipe the element it just
+    // drew. Pin the order explicitly.
+    let received = server
+        .received_requests()
+        .await
+        .expect("request recording is enabled by default");
+    assert_eq!(received.len(), 2);
+    assert_eq!(received[0].method, http::Method::DELETE);
+    assert_eq!(received[1].method, http::Method::POST);
 }
 
 #[tokio::test]
@@ -49,6 +60,16 @@ async fn keep_skips_the_clear() {
         .output()
         .expect("should run");
     assert!(output.status.success());
+
+    // .expect(0) above already proves no DELETE arrived; spell out what did
+    // arrive so the test reads as "only a POST happened" rather than just
+    // "no DELETE happened".
+    let received = server
+        .received_requests()
+        .await
+        .expect("request recording is enabled by default");
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0].method, http::Method::POST);
 }
 
 #[test]
