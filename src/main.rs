@@ -74,6 +74,21 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
 
             emitter.success("drawn", Some(&payload))
         }
+        Command::Asset(asset) => {
+            let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
+            match asset {
+                cli::AssetCmd::Upload(args) => {
+                    cmd::asset::upload(args, &settings, emitter, cli.global.dry_run).await
+                }
+                cli::AssetCmd::List => {
+                    Err(CliError::runtime("`busy asset list` arrives in Task 4"))
+                }
+                cli::AssetCmd::Delete(_) => {
+                    Err(CliError::runtime("`busy asset delete` arrives in Task 5"))
+                }
+            }
+        }
+        Command::Draw(_) => Err(CliError::runtime("`busy draw` arrives in Task 6")),
         Command::Clear => {
             let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
             cmd::clear::run(&settings, emitter, cli.global.dry_run).await

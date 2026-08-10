@@ -16,19 +16,6 @@ use image::{DynamicImage, ImageFormat, ImageReader};
 use crate::error::CliError;
 
 /// An image decoded, fitted, and re-encoded ready to upload.
-// Not yet constructed outside tests — the asset commands that call `prepare`
-// land in a later task of this phase. `cfg_attr(not(test), ...)` keeps the
-// expectation accurate under both `cargo test` (where the unit tests below
-// use it) and `cargo clippy --all-targets` (where the non-test build does
-// not); once real callers exist, drop this and let dead-code analysis run
-// normally.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired up by the asset-upload task later in this phase"
-    )
-)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prepared {
     /// PNG bytes. The device decodes PNG; nothing else needs to be produced.
@@ -40,13 +27,6 @@ pub struct Prepared {
 impl Prepared {
     /// Whether fitting changed the dimensions. A resize the user cannot see is
     /// the problem this phase exists to fix, so callers warn on this.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "wired up by the asset-upload task later in this phase"
-        )
-    )]
     pub fn was_resized(&self) -> bool {
         self.original != self.final_size
     }
@@ -57,13 +37,6 @@ impl Prepared {
 ///
 /// Never enlarges: a source already inside the target is re-encoded unchanged
 /// in dimensions.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired up by the asset-upload task later in this phase"
-    )
-)]
 pub fn prepare(bytes: &[u8], target: (u32, u32)) -> Result<Prepared, CliError> {
     let reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()

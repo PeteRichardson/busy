@@ -15,11 +15,6 @@ pub use busylib::model::assets::{
 pub use busylib::model::assets::ImageElement;
 pub use busylib::model::storage::StorageListElement;
 pub use busylib::types::app_name::AppName;
-// `AssetName` has no caller until Task 3 adds `busy asset upload`.
-#[expect(
-    unused_imports,
-    reason = "no caller until Task 3 adds `busy asset upload`"
-)]
 pub use busylib::types::asset_name::AssetName;
 // `AssetPath` has no caller until Task 6 wires `busy draw` up to assets.
 #[expect(
@@ -105,7 +100,6 @@ impl Device {
     }
 
     /// Write one asset into this application's directory. Overwrites in place.
-    #[expect(dead_code, reason = "no caller until Task 3 adds `busy asset upload`")]
     pub async fn upload(&self, file: &str, bytes: Vec<u8>) -> Result<(), CliError> {
         self.client
             .assets()

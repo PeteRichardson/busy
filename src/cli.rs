@@ -4,6 +4,8 @@
 //! Defaults live in `config::Defaults` so that "unset" stays distinguishable
 //! from "explicitly set to the default", which the template layer needs.
 
+use std::path::PathBuf;
+
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
@@ -21,8 +23,48 @@ pub struct Cli {
 pub enum Command {
     /// Draw a line of text
     Text(Box<TextArgs>),
+    /// Draw an uploaded asset, a device built-in, or a raw payload
+    Draw(Box<DrawArgs>),
+    /// Manage this application's uploaded assets
+    #[command(subcommand)]
+    Asset(AssetCmd),
     /// Remove everything this application has drawn
     Clear,
+}
+
+/// Filled in by Task 6, which wires `busy draw` up to assets and stock paths.
+#[derive(Args, Debug, Clone, Default)]
+pub struct DrawArgs {
+    /// Asset name, or a `shared/…` device built-in
+    pub name: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AssetCmd {
+    /// Convert, fit, and upload a local image
+    Upload(AssetUploadArgs),
+    /// List this application's assets, read from the device
+    List,
+    /// Delete ALL of this application's assets
+    Delete(AssetDeleteArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct AssetUploadArgs {
+    /// Local image file. PNG, JPEG, or GIF; always stored as PNG.
+    pub path: PathBuf,
+
+    /// Panel to fit the image for. This is the *fit target*, not where the
+    /// image is drawn — repeat `--screen` on `busy draw` to render it there.
+    #[arg(short, long, value_enum)]
+    pub screen: Option<ScreenArg>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct AssetDeleteArgs {
+    /// Skip the confirmation prompt
+    #[arg(short, long)]
+    pub yes: bool,
 }
 
 #[derive(Args, Debug, Clone, Default)]
