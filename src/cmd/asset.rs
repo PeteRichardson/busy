@@ -7,6 +7,36 @@ use crate::error::CliError;
 use crate::image;
 use crate::output::Emitter;
 
+/// List this application's assets, read from the device rather than from any
+/// local record — there is no local record, deliberately.
+pub async fn list(settings: &Settings, emitter: &Emitter, dry_run: bool) -> Result<(), CliError> {
+    if dry_run {
+        return emitter.success(&format!("would list assets for `{}`", settings.app), None);
+    }
+
+    let device = Device::connect(settings)?;
+    let entries = device.list_assets().await?;
+
+    let mut files: Vec<(&str, u64)> = entries
+        .iter()
+        .filter(|entry| !entry.is_dir())
+        .map(|entry| (entry.name(), entry.size().unwrap_or(0)))
+        .collect();
+    files.sort_by_key(|(name, _)| *name);
+
+    if files.is_empty() {
+        return emitter.success(&format!("no assets for `{}`", settings.app), None);
+    }
+
+    let mut report = String::new();
+    for (name, size) in &files {
+        report.push_str(&format!("{name}\t{size}\n"));
+    }
+    report.push_str(&format!("{} asset(s)", files.len()));
+
+    emitter.success_list(&report, &files)
+}
+
 /// Convert a local image to a panel-sized PNG and upload it.
 ///
 /// Conversion happens here rather than at draw time because `assets/upload` is

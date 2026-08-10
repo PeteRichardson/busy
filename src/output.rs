@@ -95,6 +95,37 @@ impl Emitter {
         Ok(())
     }
 
+    /// Report success for a listing whose items a machine consumer needs
+    /// individually addressable rather than folded into one formatted blob.
+    /// `summary` is the human-facing text printed as-is without `--json`
+    /// (a `name\tsize` block followed by a count line); under `--json` that
+    /// text is dropped in favour of an `"assets"` array of `{name, size}`
+    /// objects, so a script never has to re-parse tabs and newlines out of a
+    /// JSON string to get at the data — the same class of "technically
+    /// valid but useless" JSON that warnings-during-success produced before
+    /// they were buffered (see `warn_always`).
+    pub fn success_list(&self, summary: &str, items: &[(&str, u64)]) -> Result<(), CliError> {
+        if self.json {
+            let assets: Vec<_> = items
+                .iter()
+                .map(|(name, size)| serde_json::json!({"name": name, "size": size}))
+                .collect();
+            let mut body = serde_json::json!({
+                "ok": true,
+                "summary": format!("{} asset(s)", items.len()),
+                "assets": assets,
+            });
+            self.attach_warnings(&mut body);
+            let json = serde_json::to_string_pretty(&body).map_err(|error| {
+                CliError::runtime(format!("could not serialize output: {error}"))
+            })?;
+            println!("{json}");
+        } else if !self.quiet {
+            println!("{summary}");
+        }
+        Ok(())
+    }
+
     /// Report a failure. Under `--json` this writes a parseable object to
     /// stderr so a wrapper script can branch on it without scraping prose —
     /// any warnings buffered earlier in the run ride along in the same

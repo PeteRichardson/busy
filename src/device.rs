@@ -114,7 +114,6 @@ impl Device {
     /// learned from the text of a 400. `DELETE assets/upload` removes the
     /// directory rather than emptying it, so a 400 here means "no assets"
     /// rather than a failure.
-    #[expect(dead_code, reason = "no caller until Task 4 adds `busy asset list`")]
     pub async fn list_assets(&self) -> Result<Vec<StorageListElement>, CliError> {
         let path = format!("/ext/user_assets/{}", self.app);
         let path = StoragePath::new(path)

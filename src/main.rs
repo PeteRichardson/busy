@@ -81,7 +81,7 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
                     cmd::asset::upload(args, &settings, emitter, cli.global.dry_run).await
                 }
                 cli::AssetCmd::List => {
-                    Err(CliError::runtime("`busy asset list` arrives in Task 4"))
+                    cmd::asset::list(&settings, emitter, cli.global.dry_run).await
                 }
                 cli::AssetCmd::Delete(_) => {
                     Err(CliError::runtime("`busy asset delete` arrives in Task 5"))
