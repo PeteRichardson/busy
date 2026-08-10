@@ -6,6 +6,7 @@ mod device;
 mod error;
 mod output;
 mod sanitize;
+mod validate;
 
 use clap::Parser;
 
@@ -42,6 +43,10 @@ fn run(cli: &Cli, emitter: Emitter) -> Result<(), CliError> {
             let message = args.message.clone();
 
             let payload = cmd::text::build_payload(args, &settings, &file, &message)?;
+
+            for warning in validate::bounds_warnings(&payload) {
+                emitter.warn(&warning);
+            }
 
             if cli.global.dry_run {
                 return emitter.dry_run(&payload);

@@ -13,7 +13,7 @@
 // crate-level allow.
 #[allow(unused_imports)]
 pub use busylib::model::assets::{
-    Align, DisplayElement, DisplayElements, Font, Lifetime, Screen, TextElement,
+    Align, DisplayElement, DisplayElements, ElementKind, Font, Lifetime, Screen, TextElement,
 };
 #[allow(unused_imports)]
 pub use busylib::types::app_name::AppName;
