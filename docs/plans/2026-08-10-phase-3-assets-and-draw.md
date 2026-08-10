@@ -1772,6 +1772,43 @@ git commit -m "docs: probe assertions and README for assets and draw"
 - An oversized image drawn on the real bar appears whole, not cropped — verified by reading the frame back.
 - `cargo test`, `cargo clippy --all-targets -- -D warnings`, and `cargo fmt --check` are green.
 
+## Execution notes, learned from Phases 1–2
+
+Carried forward because they measurably improved the second half of that run, and are
+not recorded anywhere else.
+
+**The plan is the likeliest source of defects, not the implementers.** Phases 1–2 ran
+nine real bugs from the plan against two from implementers. Transcription was reliable;
+specification was not. Two were caught by a pre-flight scan of the plan before dispatching
+anything — do that scan. Look especially for a constraint the plan then violates itself,
+and for code the plan mandates that the review rubric would call a defect.
+
+**Have reviewers write their report to a file and return a short verdict.** A reviewer's
+full report stays resident in the controller's context for the rest of the session, and
+its value drops to near zero the moment it has been acted on. Inline reports cost ~2.5k
+tokens each; a file plus a ten-line verdict costs ~300 for the same information.
+
+**Verify by running the binary, not by reading a green suite.** Every one of the most
+serious findings in Phases 1–2 came from execution, not from tests: a warning that
+claimed "11px does not fit 72px", a `--json` mode that emitted invalid JSON whenever a
+warning fired, a success line printed for a draw that never happened. All three had
+passing tests. For this phase, the equivalent is reading a frame back off the device —
+a fitted image and a cropped one both exit 0.
+
+**Sonnet is the floor for implementers.** Haiku took 33 minutes and 30 tool calls on a
+task Sonnet did in 88 seconds. The cheap tier costs more in wall-clock and context than
+it saves.
+
+**Treat an Important finding as a fix round even if the summary says "Approved".** One
+Phase 1–2 review did exactly that, and the finding — a test that checked two requests
+happened but not their order — would have let a `POST`-then-`DELETE` regression wipe the
+element it had just drawn and still exit 0.
+
+**Expect API errors mid-task.** Three subagents died to connection errors, one twice on
+the same task. Recovery was cheap every time because the work was uncommitted and the
+ledger recorded the position; check the working tree before re-dispatching, since a dead
+agent often got further than its last message suggests.
+
 ## Deferred, and where it is recorded
 
 Templates and `--var`, the inert-flag check, `--id`-is-an-error-for-templates: Phase 4. The replace-by-default flicker fix and the fourth invisibility mode: `docs/specs/2026-08-09-busy-cli-ux-design.md` §9. A draw-time warning when an asset's dimensions suit the other panel: §10 of this phase's spec — it needs a `storage/read` round trip per draw, so it waits until the annoyance is real.
