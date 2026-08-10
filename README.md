@@ -53,8 +53,10 @@ stays out of your shell history and out of `ps`.
   screen instead, for scripts that cannot tolerate the blink.
 - **Font size and overflow.** A `--font large` message fits roughly 13
   characters before the front panel's 72px width clips it silently; `small`
-  fits about 22. The CLI estimates the rendered width and warns when it looks
-  like it will overflow, pointing at `--width`/`--scroll-rate`.
+  fits about 22. The CLI estimates the rendered width and warns when the text
+  is wider than the panel, pointing at `--width`/`--scroll-rate`. It does not
+  currently catch the narrower case of short text positioned so close to an
+  edge that most of it falls off.
 - **ASCII only.** The bar's fonts are bitmap ASCII. Smart quotes, dashes, and
   ellipses are transliterated automatically and a warning is printed; anything
   else is dropped.

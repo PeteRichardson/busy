@@ -532,7 +532,37 @@ Two consequences, both accepted:
 
 ---
 
-## 9. Open, deliberately
+## 9. Follow-ups carried out of the foundation phase
+
+Raised by the whole-branch review of the Phase 1–2 implementation and deliberately not
+fixed there. Each is real; none blocks the foundation.
+
+1. **A fourth invisibility mode is uncovered.** `validate::bounds_warnings` catches an
+   out-of-bounds anchor, an anchor whose `align` pushes the element off-screen, and text
+   wider than the panel. It does not catch short text positioned so near an edge that most
+   of it falls off — `busy text -x 70 --align top_left "Hello"` leaves about 2px visible
+   and warns nothing. The span arithmetic that would catch it was removed because it
+   produced a factually false warning ("11px does not fit 72px") when it fired for
+   positional reasons. Reinstating it needs the position and width checks kept separate.
+
+2. **The replace-by-default flicker.** Measured and documented in the architecture doc
+   §5.3. The cheap fix — skip the `DELETE` when the id set being written covers the one
+   last written — needs a small state file keyed by `(addr, application_name)` and reset
+   by `busy clear`. It is a heuristic: an out-of-band writer invalidates it, so it must
+   degrade to clearing rather than to leaving stale elements.
+
+3. **`FromArgName::accepted()` hand-duplicates clap's snake_case spellings.** Adding a
+   variant to `FontArg`/`AlignArg`/`ScreenArg` without updating the matching list would
+   silently produce a stale error hint with no compiler signal. Drive it from
+   `T::value_variants()` instead.
+
+4. **Precedence tests sample narrowly.** The flag→env→file→default chain now has
+   end-to-end coverage for `addr`, but `app`, `token`, `http_timeout`, and `color` are
+   only covered at some layers.
+
+---
+
+## 10. Open, deliberately
 
 - **`busy status` output shape** — not designed here.
 - **Config file layout** — unchanged from architecture doc §6.5.
