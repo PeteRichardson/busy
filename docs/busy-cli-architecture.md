@@ -350,6 +350,24 @@ replace-by-convention: track the id set the CLI last wrote (in a small state fil
 under `~/.local/state/busy/`) and overwrite or blank exactly those ids instead of
 clearing. Don't build that unless the flicker is real.
 
+> **Measured 2026-08-10 (API 25.0.0): the flicker is real.** Sampling `GET /screen`
+> across a normal `busy text` replace draw shows a clean three-phase transition — old
+> text, then the **cleared-screen frame**, then the new text (2 blank samples out of 30).
+> The panel visibly blanks on every invocation, which is the common case, not an edge
+> case.
+>
+> A refinement the original note did not anticipate makes the fallback cheaper than
+> described. Because `POST display/draw` upserts by `id`, the DELETE is only needed when
+> a *previous* draw left elements this one will not overwrite. If the id set about to be
+> written is a superset of the id set last written, the POST alone replaces everything
+> and no clear is required — which is exactly the repeated `busy text` case, where both
+> sets are just `{message}`. The state file therefore only has to answer "which ids did I
+> write last time?", and the DELETE becomes rare rather than universal.
+>
+> Deferred: this is a new subsystem (`state.rs`, removed in the plan's Task 4 when asset
+> sync went device-authoritative) and is out of scope for the foundation plan. `--keep`
+> already gives an escape hatch today for scripts that cannot tolerate the blank.
+
 ### 5.4 Bounds
 
 The front display is 72×16 RGB; the back is 160×80 in 16 greys. Elements placed
