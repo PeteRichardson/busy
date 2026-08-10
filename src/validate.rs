@@ -4,11 +4,8 @@
 //! no error, so these are warnings the CLI raises itself. They never block a
 //! send — the user may know something the CLI does not.
 
+use crate::config;
 use crate::device::{Align, DisplayElements, ElementKind, Font, Screen};
-
-/// Front display: 72x16 RGB. Back display: 160x80 in 16 greys.
-const FRONT: (i16, i16) = (72, 16);
-const BACK: (i16, i16) = (160, 80);
 
 /// Approximate rendered width per character, in pixels, measured on real
 /// hardware (API 25.0.0) by drawing known strings and reading back the frame
@@ -52,10 +49,8 @@ pub fn bounds_warnings(payload: &DisplayElements) -> Vec<String> {
 
     for element in &payload.elements {
         let screen = element.display.unwrap_or(Screen::Front);
-        let (width, height) = match screen {
-            Screen::Front => FRONT,
-            Screen::Back => BACK,
-        };
+        let (width, height) = config::Defaults::panel(screen);
+        let (width, height) = (width as i16, height as i16);
         let screen_name = match screen {
             Screen::Front => "front",
             Screen::Back => "back",

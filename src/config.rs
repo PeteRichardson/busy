@@ -49,6 +49,15 @@ impl Defaults {
             Screen::Back => (80, 40),
         }
     }
+
+    /// Pixel dimensions of a display. The front panel is 72x16 RGB; the back is
+    /// 160x80 in 16 greys. `position` above is the centre of these.
+    pub fn panel(screen: Screen) -> (u32, u32) {
+        match screen {
+            Screen::Front => (72, 16),
+            Screen::Back => (160, 80),
+        }
+    }
 }
 
 /// Values read from the environment. Constructed literally in tests.

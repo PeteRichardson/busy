@@ -4,6 +4,7 @@ mod color;
 mod config;
 mod device;
 mod error;
+mod image;
 mod input;
 mod output;
 mod sanitize;
