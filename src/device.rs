@@ -130,7 +130,6 @@ impl Device {
     ///
     /// All-or-nothing: the API offers no per-file delete. `storage/remove`
     /// returns 400 on a real asset path and the file survives — measured.
-    #[expect(dead_code, reason = "no caller until Task 5 adds `busy asset delete`")]
     pub async fn delete_assets(&self) -> Result<(), CliError> {
         self.client
             .assets()

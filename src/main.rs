@@ -83,8 +83,8 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
                 cli::AssetCmd::List => {
                     cmd::asset::list(&settings, emitter, cli.global.dry_run).await
                 }
-                cli::AssetCmd::Delete(_) => {
-                    Err(CliError::runtime("`busy asset delete` arrives in Task 5"))
+                cli::AssetCmd::Delete(args) => {
+                    cmd::asset::delete(args, &settings, emitter, cli.global.dry_run).await
                 }
             }
         }

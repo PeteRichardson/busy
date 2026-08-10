@@ -1,6 +1,8 @@
 //! `busy asset` — upload, list, and delete this application's assets.
 
-use crate::cli::AssetUploadArgs;
+use std::io::IsTerminal as _;
+
+use crate::cli::{AssetDeleteArgs, AssetUploadArgs};
 use crate::config::{self, Settings};
 use crate::device::{AssetName, Device, Screen};
 use crate::error::CliError;
@@ -114,4 +116,61 @@ pub async fn upload(
     device.upload(name.as_str(), prepared.png).await?;
 
     emitter.success(&format!("uploaded `{name}`"), None)
+}
+
+/// Delete every asset belonging to this application.
+///
+/// The API has no per-file delete — `storage/remove` returns 400 on a real
+/// asset path and the file survives — so this is all-or-nothing, and the file
+/// list is printed first to make the blast radius concrete.
+pub async fn delete(
+    args: &AssetDeleteArgs,
+    settings: &Settings,
+    emitter: &Emitter,
+    dry_run: bool,
+) -> Result<(), CliError> {
+    let device = Device::connect(settings)?;
+    let entries = device.list_assets().await?;
+    let names: Vec<&str> = entries
+        .iter()
+        .filter(|entry| !entry.is_dir())
+        .map(|entry| entry.name())
+        .collect();
+
+    if names.is_empty() {
+        return emitter.success(&format!("no assets for `{}`", settings.app), None);
+    }
+
+    let summary = format!(
+        "this deletes ALL {} asset(s) for `{}`: {}",
+        names.len(),
+        settings.app,
+        names.join(", ")
+    );
+
+    if dry_run {
+        return emitter.success(&format!("would delete: {summary}"), None);
+    }
+
+    if !args.yes {
+        if !std::io::stdin().is_terminal() {
+            return Err(CliError::usage(format!(
+                "{summary}\nRefusing to delete without confirmation. Re-run with --yes."
+            )));
+        }
+        emitter.warn_always(&summary);
+        eprint!("Delete them? [y/N] ");
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .map_err(|error| CliError::usage(format!("could not read confirmation: {error}")))?;
+        if !matches!(answer.trim(), "y" | "Y" | "yes" | "Yes") {
+            return emitter.success("cancelled", None);
+        }
+    } else {
+        emitter.warn_always(&summary);
+    }
+
+    device.delete_assets().await?;
+    emitter.success(&format!("deleted {} asset(s)", names.len()), None)
 }

@@ -220,3 +220,96 @@ fn a_missing_source_file_is_a_usage_error() {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("nope.png"));
 }
+
+#[tokio::test]
+async fn delete_with_yes_lists_first_then_deletes() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/storage/list"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "list": [{"type": "file", "name": "logo.png", "size": 451}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/assets/upload"))
+        .and(query_param("application_name", "busy"))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let output = busy_at(&server)
+        .args(["asset", "delete", "--yes"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The blast radius must be shown even when confirmation is skipped.
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(combined.contains("logo.png"), "got {combined}");
+}
+
+#[tokio::test]
+async fn delete_refuses_without_yes_when_not_a_terminal() {
+    // The test harness gives the child a piped stdin, so there is no tty to
+    // prompt on. Refusing is the only safe answer: prompting into the void
+    // would hang, and deleting silently would be destructive.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/storage/list"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "list": [{"type": "file", "name": "logo.png", "size": 451}]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/assets/upload"))
+        .respond_with(ok())
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let output = busy_at(&server)
+        .args(["asset", "delete"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--yes"),
+        "the error must name the escape hatch"
+    );
+}
+
+#[tokio::test]
+async fn deleting_when_there_is_nothing_to_delete_says_so() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/storage/list"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": "Bad Request"
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/assets/upload"))
+        .respond_with(ok())
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let output = busy_at(&server)
+        .args(["asset", "delete", "--yes"])
+        .output()
+        .expect("should run");
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("no assets"));
+}
