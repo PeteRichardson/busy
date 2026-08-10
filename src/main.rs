@@ -54,8 +54,14 @@ async fn run(cli: &Cli, emitter: Emitter) -> Result<(), CliError> {
             }
 
             let device = device::Device::connect(&settings)?;
-            // Replace-by-default is Task 9; for now always clear first.
-            device.clear().await?;
+
+            // POST display/draw upserts by id and never removes, so a previous
+            // multi-element draw would leave its other elements on screen.
+            // Replacing by default makes every invocation independent of history;
+            // --keep is for scripts that update one element of a live layout.
+            if !args.delivery.keep {
+                device.clear().await?;
+            }
             device.draw(&payload).await?;
 
             emitter.success("drawn", &payload)
