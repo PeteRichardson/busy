@@ -53,20 +53,23 @@ pub fn build_payload(
     let id =
         ElementId::new(id).map_err(|error| CliError::usage(format!("invalid --id: {error}")))?;
 
-    let mut builder = DisplayElement::builder(id)
-        .map_err(|error| CliError::usage(error.to_string()))?
-        .at(args.placement.x.unwrap_or(0), args.placement.y.unwrap_or(0));
-
+    // Resolve the screen first: the default anchor position is the centre of
+    // whichever display we are drawing to, and the two panels differ in size.
     let screen = args
         .placement
         .screen
         .map(config::screen_from_arg)
         .unwrap_or(settings.screen);
-    builder = builder.screen(screen);
+    let (default_x, default_y) = config::Defaults::position(screen);
 
-    if let Some(align) = config::resolve_align(args.placement.align, file) {
-        builder = builder.align(align);
-    }
+    let mut builder = DisplayElement::builder(id)
+        .map_err(|error| CliError::usage(error.to_string()))?
+        .at(
+            args.placement.x.unwrap_or(default_x),
+            args.placement.y.unwrap_or(default_y),
+        )
+        .screen(screen)
+        .align(config::resolve_align(args.placement.align, file));
 
     match lifetime(args)? {
         Some(Lifetime::Timeout { timeout }) => builder = builder.timeout_secs(timeout),

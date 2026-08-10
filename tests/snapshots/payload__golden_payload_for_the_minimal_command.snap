@@ -8,9 +8,10 @@ expression: "stdout(&[\"--dry-run\", \"text\", \"Hello, World!\"])"
   "elements": [
     {
       "id": "message",
-      "x": 0,
-      "y": 0,
+      "x": 36,
+      "y": 8,
       "display": "front",
+      "align": "center",
       "type": "text",
       "text": "Hello, World!",
       "font": "large",

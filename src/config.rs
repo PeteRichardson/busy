@@ -31,6 +31,24 @@ impl Defaults {
     /// 50, which loses exactly when the user is at their desk.
     pub const PRIORITY: u8 = 95;
     pub const ELEMENT_ID: &'static str = "message";
+
+    /// The device's own implicit anchor is `top_left` — measured, not
+    /// documented upstream. We override it: centring the anchor on the middle
+    /// of the display makes the zero-argument case (`busy text "hi"`) look
+    /// deliberate rather than merely correct.
+    pub const ALIGN: Align = Align::Center;
+
+    /// Centre of a display, used as the default anchor position.
+    ///
+    /// Screen-dependent because the two panels differ: the front is 72x16 and
+    /// the back is 160x80. A single constant pair would centre one and look
+    /// accidental on the other.
+    pub fn position(screen: Screen) -> (i16, i16) {
+        match screen {
+            Screen::Front => (36, 8),
+            Screen::Back => (80, 40),
+        }
+    }
 }
 
 /// Values read from the environment. Constructed literally in tests.
@@ -248,16 +266,19 @@ pub fn resolve(
 }
 
 /// Align is resolved separately because the flag lives on `PlacementArgs`
-/// rather than `StyleArgs`, and because the API defines no default for it —
-/// when nothing sets it, the field is omitted and the device decides.
-pub fn resolve_align(flag: Option<AlignArg>, file: &FileConfig) -> Option<Align> {
+/// rather than `StyleArgs`. The API itself defines no default for it — the
+/// device's implicit anchor is `top_left` — but we deliberately override
+/// that with `Defaults::ALIGN` when neither the flag nor the config file
+/// supplies one.
+pub fn resolve_align(flag: Option<AlignArg>, file: &FileConfig) -> Align {
     if let Some(align) = flag {
-        return Some(align_from_arg(align));
+        return align_from_arg(align);
     }
     file.defaults
         .align
         .as_deref()
         .and_then(|name| parse_enum::<Align>(name, "align").ok())
+        .unwrap_or(Defaults::ALIGN)
 }
 
 pub fn parse_priority(input: &str) -> Result<u8, String> {
@@ -496,13 +517,14 @@ mod tests {
         )
         .unwrap();
 
-        // No default at the API level: when nothing sets it, the field is
-        // omitted from the payload and the device decides.
-        assert_eq!(super::resolve_align(None, &empty), None);
-        assert_eq!(super::resolve_align(None, &with_align), Some(Align::Center));
+        // No default at the API level: the device's implicit anchor is
+        // `top_left`, but we deliberately override it with `Defaults::ALIGN`
+        // when nothing else sets it.
+        assert_eq!(super::resolve_align(None, &empty), Align::Center);
+        assert_eq!(super::resolve_align(None, &with_align), Align::Center);
         assert_eq!(
             super::resolve_align(Some(AlignArg::TopLeft), &with_align),
-            Some(Align::TopLeft),
+            Align::TopLeft,
             "the flag must win over the config file"
         );
     }
