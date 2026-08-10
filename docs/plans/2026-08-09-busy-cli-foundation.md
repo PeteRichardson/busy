@@ -3102,7 +3102,11 @@ use crate::error::CliError;
 /// Resolve the message argument. `-` means stdin, which is how CI usually has
 /// the text already: `git log -1 --format=%s | busy text -`.
 ///
-/// A literal `-` as the message is still reachable with `busy text -- -`.
+/// A single-character `-` message is not reachable: `busy text -- -` still
+/// hits this sentinel, because this function only ever sees the resolved
+/// string value and cannot know whether `--` preceded it. Any other message
+/// starting with `-` (e.g. `-3 tests failing`) is unaffected and only needs
+/// `--` to stop clap treating it as a flag.
 pub fn read_message(argument: &str) -> Result<String, CliError> {
     if argument != "-" {
         return Ok(argument.to_owned());

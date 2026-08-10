@@ -127,6 +127,15 @@ architecture doc's §8 already specifies.
 (`… | busy draw error -`), where it binds to the `message` variable exactly as a literal
 argument would. It is never a template or asset name.
 
+**Known limitation, verified rather than assumed:** a message consisting of exactly `-`
+cannot be expressed. `busy text -- -` does not help — `--` only stops clap treating the
+value as a flag, and the resolved string reaching the message resolver is still `"-"`,
+which is indistinguishable from the sentinel. Any *longer* message beginning with `-`
+is fine and needs only `--` (`busy text -- "-3 tests failing"`). A one-character `-`
+notification is not worth a second escape convention, so this is accepted rather than
+fixed; it is recorded here because an earlier draft of this document wrongly claimed
+`busy text -- -` worked.
+
 ---
 
 ## 3. `draw`: one verb for "put this on the bar"
