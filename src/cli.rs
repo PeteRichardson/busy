@@ -57,12 +57,8 @@ pub struct GlobalArgs {
     pub dry_run: bool,
 
     /// Suppress warnings
-    #[arg(short, long, global = true, conflicts_with = "verbose")]
-    pub quiet: bool,
-
-    /// Print more detail
     #[arg(short, long, global = true)]
-    pub verbose: bool,
+    pub quiet: bool,
 }
 
 #[derive(Args, Debug, Clone, Default)]

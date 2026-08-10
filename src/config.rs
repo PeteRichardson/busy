@@ -108,9 +108,6 @@ pub struct Settings {
     pub http_timeout_ms: u64,
     pub font: Font,
     pub color: Color,
-    // Stays dead through Task 7, which is what actually selects a screen on
-    // the device; no test asserts on it either.
-    #[cfg_attr(test, expect(dead_code, reason = "stays dead until Task 7 reads it"))]
     pub screen: Screen,
     pub priority: u8,
 }
@@ -213,7 +210,7 @@ pub fn resolve(
     let color = match &style.color {
         Some(input) => color::parse(input)?,
         None => match &file.defaults.color {
-            Some(input) => color::parse(input)?,
+            Some(input) => color::parse_in_config_file(input)?,
             None => Defaults::COLOR,
         },
     };
@@ -252,16 +249,16 @@ pub fn resolve(
 /// rather than `StyleArgs`. The API itself defines no default for it — the
 /// device's implicit anchor is `top_left` — but we deliberately override
 /// that with `Defaults::ALIGN` when neither the flag nor the config file
-/// supplies one.
-pub fn resolve_align(flag: Option<AlignArg>, file: &FileConfig) -> Align {
+/// supplies one. An invalid config-file value is a hard error, exactly like
+/// font, priority, and colour: a typo here must not be silently ignored.
+pub fn resolve_align(flag: Option<AlignArg>, file: &FileConfig) -> Result<Align, String> {
     if let Some(align) = flag {
-        return align_from_arg(align);
+        return Ok(align_from_arg(align));
     }
-    file.defaults
-        .align
-        .as_deref()
-        .and_then(|name| parse_enum::<Align>(name, "align").ok())
-        .unwrap_or(Defaults::ALIGN)
+    match file.defaults.align.as_deref() {
+        Some(name) => parse_enum::<Align>(name, "align"),
+        None => Ok(Defaults::ALIGN),
+    }
 }
 
 pub fn parse_priority(input: &str) -> Result<u8, String> {
@@ -393,9 +390,9 @@ pub fn screen_from_arg(arg: ScreenArg) -> Screen {
 
 #[cfg(test)]
 mod tests {
-    use super::{Env, FileConfig, Settings, parse_priority, resolve};
+    use super::{Defaults, Env, FileConfig, Settings, parse_priority, resolve};
     use crate::cli::{AlignArg, FontArg, GlobalArgs, PrefixArg, StyleArgs};
-    use crate::device::{Align, Font};
+    use crate::device::{Align, Font, Screen};
 
     fn settings(global: GlobalArgs, style: StyleArgs, env: Env, file: FileConfig) -> Settings {
         resolve(&global, &style, &env, &file).expect("should resolve")
@@ -507,17 +504,33 @@ mod tests {
         // No default at the API level: the device's implicit anchor is
         // `top_left`, but we deliberately override it with `Defaults::ALIGN`
         // when nothing else sets it.
-        assert_eq!(super::resolve_align(None, &empty), Align::Center);
+        assert_eq!(super::resolve_align(None, &empty).unwrap(), Align::Center);
         assert_eq!(
-            super::resolve_align(None, &with_align),
+            super::resolve_align(None, &with_align).unwrap(),
             Align::BottomMid,
             "the config file must be consulted when no flag is given"
         );
         assert_eq!(
-            super::resolve_align(Some(AlignArg::TopLeft), &with_align),
+            super::resolve_align(Some(AlignArg::TopLeft), &with_align).unwrap(),
             Align::TopLeft,
             "the flag must win over the config file"
         );
+    }
+
+    #[test]
+    fn an_invalid_align_in_the_config_file_is_reported_not_swallowed() {
+        // I4: this used to fall back to `Defaults::ALIGN` via `.ok()` while
+        // font/priority/colour all hard-failed on the same kind of mistake.
+        let file = toml::from_str::<FileConfig>(
+            r#"
+            [defaults]
+            align = "centre"
+            "#,
+        )
+        .unwrap();
+        let error = super::resolve_align(None, &file).expect_err("should reject");
+        assert!(error.contains("centre"), "got {error:?}");
+        assert!(error.contains("in the config file"), "got {error:?}");
     }
 
     #[test]
@@ -555,5 +568,16 @@ mod tests {
         )
         .expect_err("should reject");
         assert!(error.contains("chartreuse"), "got {error:?}");
+        assert!(
+            error.contains("in the config file"),
+            "should say which layer, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn default_position_differs_by_screen() {
+        // D10: the back panel (160x80) was otherwise entirely unexercised.
+        assert_eq!(Defaults::position(Screen::Front), (36, 8));
+        assert_eq!(Defaults::position(Screen::Back), (80, 40));
     }
 }

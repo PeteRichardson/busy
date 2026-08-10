@@ -8,14 +8,17 @@ use crate::device::{
 use crate::error::CliError;
 use crate::{color, sanitize};
 
-/// Build the wire payload. Pure: no I/O, no network, so `--dry-run` and the
-/// real send are guaranteed to produce identical bytes.
+/// Build the wire payload, plus whether `sanitize::to_ascii` had to change
+/// anything. Pure: no I/O, no network, so `--dry-run` and the real send are
+/// guaranteed to produce identical bytes — which is why this returns the
+/// transliteration flag for the caller to warn on, rather than emitting the
+/// warning itself.
 pub fn build_payload(
     args: &TextArgs,
     settings: &Settings,
     file: &FileConfig,
     message: &str,
-) -> Result<DisplayElements, CliError> {
+) -> Result<(DisplayElements, bool), CliError> {
     let sanitized = sanitize::to_ascii(message);
     if sanitized.text.is_empty() {
         return Err(CliError::usage(format!(
@@ -69,7 +72,7 @@ pub fn build_payload(
             args.placement.y.unwrap_or(default_y),
         )
         .screen(screen)
-        .align(config::resolve_align(args.placement.align, file));
+        .align(config::resolve_align(args.placement.align, file)?);
 
     match lifetime(args)? {
         Some(Lifetime::Timeout { timeout }) => builder = builder.timeout_secs(timeout),
@@ -98,7 +101,7 @@ pub fn build_payload(
         payload = payload.led_notification_color(color::parse(input)?);
     }
 
-    Ok(payload)
+    Ok((payload, sanitized.changed))
 }
 
 /// `timeout` and `display_until` are mutually exclusive; clap enforces that at

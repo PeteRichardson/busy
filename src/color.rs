@@ -23,6 +23,19 @@ const NAMES: &[(&str, u32)] = &[
 /// Parse a colour string into a validated Color.
 /// This function is used by the CLI command handlers and is tested separately.
 pub fn parse(input: &str) -> Result<Color, String> {
+    parse_with_context(input, "")
+}
+
+/// Like `parse`, but names the config file in any error message. `parse`
+/// itself has no way to know which layer supplied a bad value — the `--color`
+/// flag and `[defaults] color` share the same syntax — so a user with a typo
+/// in the file couldn't tell where to look. This makes the config-file path
+/// say so, matching how the font/align/screen errors already do.
+pub fn parse_in_config_file(input: &str) -> Result<Color, String> {
+    parse_with_context(input, " in the config file")
+}
+
+fn parse_with_context(input: &str, context: &str) -> Result<Color, String> {
     let trimmed = input.trim();
 
     let lower = trimmed.to_ascii_lowercase();
@@ -38,7 +51,7 @@ pub fn parse(input: &str) -> Result<Color, String> {
         .unwrap_or(trimmed);
 
     if hex.is_empty() || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(invalid(input));
+        return Err(invalid(input, context));
     }
 
     let nibble = |index: usize| -> u8 {
@@ -52,15 +65,15 @@ pub fn parse(input: &str) -> Result<Color, String> {
         3 => Ok(Color::rgb(nibble(0) * 17, nibble(1) * 17, nibble(2) * 17)),
         6 => Ok(Color::rgb(byte(0), byte(2), byte(4))),
         8 => Ok(Color::rgba(byte(0), byte(2), byte(4), byte(6))),
-        _ => Err(invalid(input)),
+        _ => Err(invalid(input, context)),
     }
 }
 
 /// Format an error message for invalid colour input.
 /// Used by the parse function and its tests.
-fn invalid(input: &str) -> String {
+fn invalid(input: &str, context: &str) -> String {
     format!(
-        "invalid colour `{input}`: expected #RRGGBBAA, #RRGGBB, #RGB, a 0x-prefixed \
+        "invalid colour `{input}`{context}: expected #RRGGBBAA, #RRGGBB, #RGB, a 0x-prefixed \
          or bare hex value, or one of red, green, blue, white, black, yellow, \
          orange, cyan, magenta"
     )
@@ -68,7 +81,7 @@ fn invalid(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    use super::{parse, parse_in_config_file};
 
     fn hex(input: &str) -> String {
         parse(input).expect("should parse").to_string()
@@ -114,5 +127,18 @@ mod tests {
                 "error for {bad:?} should quote the input, got {error:?}"
             );
         }
+    }
+
+    #[test]
+    fn config_file_errors_name_the_file() {
+        let error = parse_in_config_file("chartreuse").expect_err("should be rejected");
+        assert!(error.contains("in the config file"), "got {error:?}");
+
+        // The plain flag path must not gain the same wording.
+        let flag_error = parse("chartreuse").expect_err("should be rejected");
+        assert!(
+            !flag_error.contains("in the config file"),
+            "got {flag_error:?}"
+        );
     }
 }

@@ -18,21 +18,20 @@ use crate::output::Emitter;
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let cli = Cli::parse();
-    let emitter = Emitter {
-        json: cli.global.json,
-        quiet: cli.global.quiet,
-    };
+    let emitter = Emitter::new(cli.global.json, cli.global.quiet);
 
-    if let Err(error) = run(&cli, emitter).await {
+    if let Err(error) = run(&cli, &emitter).await {
         emitter.failure(&error);
         std::process::exit(error.exit_code());
     }
 }
 
-async fn run(cli: &Cli, emitter: Emitter) -> Result<(), CliError> {
+async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
     let (file, warnings) = config::load_file();
+    // A malformed config file means "your configuration is not being
+    // applied" — that must reach the user even under --quiet.
     for warning in &warnings {
-        emitter.warn(warning);
+        emitter.warn_always(warning);
     }
 
     let env = config::Env::from_process();
@@ -42,7 +41,16 @@ async fn run(cli: &Cli, emitter: Emitter) -> Result<(), CliError> {
             let settings = config::resolve(&cli.global, &args.style, &env, &file)?;
             let message = input::read_message(&args.message)?;
 
-            let payload = cmd::text::build_payload(args, &settings, &file, &message)?;
+            let (payload, transliterated) =
+                cmd::text::build_payload(args, &settings, &file, &message)?;
+
+            if transliterated {
+                emitter.warn(
+                    "the message contained characters the bar's bitmap-ASCII fonts cannot \
+                     render (smart quotes, dashes, or similar) and was transliterated to \
+                     plain ASCII",
+                );
+            }
 
             for warning in validate::bounds_warnings(&payload) {
                 emitter.warn(&warning);
@@ -67,8 +75,7 @@ async fn run(cli: &Cli, emitter: Emitter) -> Result<(), CliError> {
         }
         Command::Clear => {
             let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
-            let device = device::Device::connect(&settings)?;
-            cmd::clear::run(&device, &settings.app, emitter, cli.global.dry_run).await
+            cmd::clear::run(&settings, emitter, cli.global.dry_run).await
         }
     }
 }
