@@ -25,7 +25,7 @@ pub async fn list(settings: &Settings, emitter: &Emitter, dry_run: bool) -> Resu
     files.sort_by_key(|(name, _)| *name);
 
     if files.is_empty() {
-        return emitter.success(&format!("no assets for `{}`", settings.app), None);
+        return emitter.success_list(&format!("no assets for `{}`", settings.app), &files);
     }
 
     let mut report = String::new();

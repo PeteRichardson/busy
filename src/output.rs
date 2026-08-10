@@ -73,55 +73,61 @@ impl Emitter {
         summary: &str,
         payload: Option<&DisplayElements>,
     ) -> Result<(), CliError> {
-        if self.json {
-            let mut body = serde_json::json!({
-                "ok": true,
-                "summary": summary,
-            });
-            if let Some(payload) = payload {
-                let payload = serde_json::to_value(payload).map_err(|error| {
-                    CliError::runtime(format!("could not serialize output: {error}"))
-                })?;
-                body["payload"] = payload;
-            }
-            self.attach_warnings(&mut body);
-            let json = serde_json::to_string_pretty(&body).map_err(|error| {
+        let mut body = serde_json::json!({
+            "ok": true,
+            "summary": summary,
+        });
+        if let Some(payload) = payload {
+            let payload = serde_json::to_value(payload).map_err(|error| {
                 CliError::runtime(format!("could not serialize output: {error}"))
             })?;
-            println!("{json}");
-        } else if !self.quiet {
-            println!("{summary}");
+            body["payload"] = payload;
         }
-        Ok(())
+        self.emit_success(summary, body)
     }
 
     /// Report success for a listing whose items a machine consumer needs
     /// individually addressable rather than folded into one formatted blob.
     /// `summary` is the human-facing text printed as-is without `--json`
-    /// (a `name\tsize` block followed by a count line); under `--json` that
-    /// text is dropped in favour of an `"assets"` array of `{name, size}`
-    /// objects, so a script never has to re-parse tabs and newlines out of a
-    /// JSON string to get at the data — the same class of "technically
-    /// valid but useless" JSON that warnings-during-success produced before
-    /// they were buffered (see `warn_always`).
+    /// (a `name\tsize` block followed by a count line, or a one-line "no
+    /// assets" message); under `--json` that text is dropped in favour of an
+    /// `"assets"` array of `{name, size}` objects — present, and `[]` when
+    /// empty, on every call so a consumer can always iterate it rather than
+    /// branching on whether the key exists — so a script never has to
+    /// re-parse tabs and newlines out of a JSON string to get at the data.
+    /// This is the same class of "technically valid but useless" JSON that
+    /// warnings-during-success produced before they were buffered (see
+    /// `warn_always`).
     pub fn success_list(&self, summary: &str, items: &[(&str, u64)]) -> Result<(), CliError> {
+        let assets: Vec<_> = items
+            .iter()
+            .map(|(name, size)| serde_json::json!({"name": name, "size": size}))
+            .collect();
+        let body = serde_json::json!({
+            "ok": true,
+            "summary": format!("{} asset(s)", items.len()),
+            "assets": assets,
+        });
+        self.emit_success(summary, body)
+    }
+
+    /// Shared tail of every success path: attach any buffered warnings, then
+    /// print `body` as pretty JSON under `--json` or `human` otherwise
+    /// (suppressed under `--quiet`, which only applies outside `--json` —
+    /// `--json --quiet` still prints the JSON document, matching `failure`
+    /// and `dry_run`, which are never suppressed by `--quiet` either).
+    /// Keeping this logic in one place is what stops `success` and
+    /// `success_list` from drifting apart the way the pre-buffering
+    /// `--json`/warning interaction once did.
+    fn emit_success(&self, human: &str, mut body: serde_json::Value) -> Result<(), CliError> {
         if self.json {
-            let assets: Vec<_> = items
-                .iter()
-                .map(|(name, size)| serde_json::json!({"name": name, "size": size}))
-                .collect();
-            let mut body = serde_json::json!({
-                "ok": true,
-                "summary": format!("{} asset(s)", items.len()),
-                "assets": assets,
-            });
             self.attach_warnings(&mut body);
             let json = serde_json::to_string_pretty(&body).map_err(|error| {
                 CliError::runtime(format!("could not serialize output: {error}"))
             })?;
             println!("{json}");
         } else if !self.quiet {
-            println!("{summary}");
+            println!("{human}");
         }
         Ok(())
     }
