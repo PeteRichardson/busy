@@ -23,7 +23,7 @@ async fn main() {
     };
 
     if let Err(error) = run(&cli, emitter).await {
-        eprintln!("busy: {error}");
+        emitter.failure(&error);
         std::process::exit(error.exit_code());
     }
 }

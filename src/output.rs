@@ -40,4 +40,21 @@ impl Emitter {
         }
         Ok(())
     }
+
+    /// Report a failure. Under `--json` this writes a parseable object to
+    /// stderr so a wrapper script can branch on it without scraping prose.
+    pub fn failure(&self, error: &CliError) {
+        if self.json {
+            let body = serde_json::json!({
+                "ok": false,
+                "error": error.to_string(),
+            });
+            match serde_json::to_string_pretty(&body) {
+                Ok(json) => eprintln!("{json}"),
+                Err(_) => eprintln!("busy: {error}"),
+            }
+        } else {
+            eprintln!("busy: {error}");
+        }
+    }
 }
