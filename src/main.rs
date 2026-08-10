@@ -1,5 +1,6 @@
 mod cli;
 mod color;
+mod config;
 mod device;
 mod sanitize;
 
