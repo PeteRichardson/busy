@@ -1,6 +1,7 @@
 mod cli;
 mod color;
 mod device;
+mod sanitize;
 
 use clap::Parser;
 
