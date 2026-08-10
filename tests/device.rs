@@ -1,0 +1,90 @@
+mod common;
+
+use common::{busy, busy_at, ok};
+use wiremock::matchers::{header, method, path, query_param};
+use wiremock::{Mock, MockServer};
+
+#[tokio::test]
+async fn a_draw_reaches_the_device() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/api/display/draw"))
+        .and(query_param("application_name", "busy"))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/display/draw"))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let output = busy_at(&server)
+        .args(["text", "Hello, World!"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn the_cloud_prefix_is_selectable() {
+    let server = MockServer::start().await;
+    Mock::given(path("/busybar/display/draw"))
+        .respond_with(ok())
+        .mount(&server)
+        .await;
+
+    let output = busy_at(&server)
+        .args(["--api-prefix", "cloud", "text", "hi"])
+        .output()
+        .expect("should run");
+    assert!(output.status.success());
+}
+
+#[tokio::test]
+async fn a_token_is_sent_as_a_bearer_header() {
+    let server = MockServer::start().await;
+    Mock::given(path("/api/display/draw"))
+        .and(header("authorization", "Bearer 12345678"))
+        .respond_with(ok())
+        .expect(2) // the DELETE and the POST
+        .mount(&server)
+        .await;
+
+    let output = busy_at(&server)
+        .args(["--token", "12345678", "text", "hi"])
+        .output()
+        .expect("should run");
+    assert!(output.status.success());
+}
+
+#[tokio::test]
+async fn dry_run_sends_nothing() {
+    let server = MockServer::start().await;
+    // No mocks mounted: any request would 404 and fail the command.
+    let output = busy_at(&server)
+        .args(["--dry-run", "text", "hi"])
+        .output()
+        .expect("should run");
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("\"application_name\": \"busy\""));
+}
+
+#[tokio::test]
+async fn an_unreachable_device_fails_with_exit_1() {
+    let output = busy()
+        .args(["--addr", "http://127.0.0.1:1", "text", "hi"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("127.0.0.1:1"), "got {stderr}");
+}

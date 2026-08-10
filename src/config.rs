@@ -100,28 +100,11 @@ pub struct FileDefaults {
 /// as they must for `align` via `resolve_align`.
 #[derive(Debug, Clone)]
 pub struct Settings {
-    // These four fields feed the HTTP client that Task 7 introduces; only
-    // this file's own unit tests read them until then.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "stays dead until Task 7 reads it")
-    )]
+    // These four fields feed the HTTP client that Task 7 introduced.
     pub addr: String,
     pub app: String,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "stays dead until Task 7 reads it")
-    )]
     pub token: Option<String>,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "stays dead until Task 7 reads it")
-    )]
     pub api_prefix: PrefixArg,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "stays dead until Task 7 reads it")
-    )]
     pub http_timeout_ms: u64,
     pub font: Font,
     pub color: Color,

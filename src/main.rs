@@ -14,20 +14,21 @@ use crate::cli::{Cli, Command};
 use crate::error::CliError;
 use crate::output::Emitter;
 
-fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let cli = Cli::parse();
     let emitter = Emitter {
         json: cli.global.json,
         quiet: cli.global.quiet,
     };
 
-    if let Err(error) = run(&cli, emitter) {
+    if let Err(error) = run(&cli, emitter).await {
         eprintln!("busy: {error}");
         std::process::exit(error.exit_code());
     }
 }
 
-fn run(cli: &Cli, emitter: Emitter) -> Result<(), CliError> {
+async fn run(cli: &Cli, emitter: Emitter) -> Result<(), CliError> {
     let (file, warnings) = config::load_file();
     for warning in &warnings {
         emitter.warn(warning);
@@ -52,7 +53,11 @@ fn run(cli: &Cli, emitter: Emitter) -> Result<(), CliError> {
                 return emitter.dry_run(&payload);
             }
 
-            // Sending arrives in Task 7.
+            let device = device::Device::connect(&settings)?;
+            // Replace-by-default is Task 9; for now always clear first.
+            device.clear().await?;
+            device.draw(&payload).await?;
+
             emitter.success("drawn", &payload)
         }
         Command::Clear => Err(CliError::runtime("`busy clear` arrives in Task 12")),

@@ -20,10 +20,6 @@ pub enum CliError {
          An active BUSY or CUSTOM work session runs at 90; built-in apps run at 10.\n\
          Retry with `--priority 95`, or set `priority` under [defaults] in {config}."
     )]
-    #[expect(
-        dead_code,
-        reason = "not constructed until Task 8 handles a 409 from display/draw"
-    )]
     PriorityConflict { requested: u8, config: String },
 }
 
