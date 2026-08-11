@@ -56,6 +56,16 @@ pub fn build_payload(
     file: &FileConfig,
     resolved: &Resolved,
 ) -> Result<DisplayElements, CliError> {
+    // `text` owns the RFC 3339 parsing for `--until`; duplicating it here would
+    // be the kind of copy this project has been careful to avoid. Rather than
+    // silently accepting the flag and ignoring it, reject it loudly until a
+    // shared home for `parse_until` exists (a separate change).
+    if args.delivery.until.is_some() {
+        return Err(CliError::usage(
+            "--until is not yet supported on `draw`; use --timeout instead",
+        ));
+    }
+
     let mut element = match resolved {
         Resolved::Asset(path) => ImageElement::asset(path.clone()),
         Resolved::Stock(path) => ImageElement::stock(path.clone()),
@@ -79,7 +89,7 @@ pub fn build_payload(
         .delivery
         .id
         .clone()
-        .unwrap_or_else(|| "image".to_owned());
+        .unwrap_or_else(|| config::Defaults::IMAGE_ELEMENT_ID.to_owned());
     let id = crate::device::ElementId::new(id)
         .map_err(|error| CliError::usage(format!("invalid --id: {error}")))?;
 

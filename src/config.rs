@@ -31,6 +31,7 @@ impl Defaults {
     /// 50, which loses exactly when the user is at their desk.
     pub const PRIORITY: u8 = 95;
     pub const ELEMENT_ID: &'static str = "message";
+    pub const IMAGE_ELEMENT_ID: &'static str = "image";
 
     /// The device's own implicit anchor is `top_left` — measured, not
     /// documented upstream. We override it: centring the anchor on the middle

@@ -60,8 +60,43 @@ fn as_stock_forces_the_interpretation() {
 }
 
 #[test]
+fn as_image_forces_a_shared_prefixed_name_to_resolve_as_an_asset() {
+    // Mirror of `as_stock_forces_the_interpretation`: `shared/` is the
+    // reserved namespace by default, but `--as image` must be able to force
+    // asset resolution anyway. This is the branch Phase 4's template rule
+    // will slot in next to.
+    let payload = stdout(&["--dry-run", "draw", "shared/clock.image", "--as", "image"]);
+    assert!(
+        payload.contains("\"path\": \"shared/clock.image\""),
+        "got {payload}"
+    );
+    assert!(!payload.contains("stock_path"), "got {payload}");
+}
+
+#[test]
 fn the_element_id_defaults_to_image() {
     assert!(stdout(&["--dry-run", "draw", "logo.png"]).contains("\"id\": \"image\""));
+}
+
+#[test]
+fn until_is_rejected_on_draw() {
+    // `--until` is accepted by clap (it's flattened in from `DeliveryArgs`,
+    // shared with `text`), but `draw` does not yet parse it — it must fail
+    // loudly rather than silently doing nothing.
+    let output = busy()
+        .args([
+            "--dry-run",
+            "draw",
+            "logo.png",
+            "--until",
+            "2026-01-01T00:00:00Z",
+        ])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--until"), "got {stderr}");
+    assert!(stderr.contains("--timeout"), "got {stderr}");
 }
 
 #[test]
