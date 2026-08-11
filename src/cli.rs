@@ -104,6 +104,7 @@ pub struct DrawArgs {
 pub enum AsArg {
     Image,
     Stock,
+    Template,
 }
 
 #[derive(Subcommand, Debug)]

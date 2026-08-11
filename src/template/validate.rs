@@ -18,9 +18,6 @@ pub struct Report {
 }
 
 impl Report {
-    // `cmd::template::validate` (Task 5) checks `report.errors`/`report.warnings`
-    // directly rather than calling this — still no production caller.
-    #[cfg_attr(not(test), expect(dead_code, reason = "no production caller yet"))]
     pub fn is_ok(&self) -> bool {
         self.errors.is_empty()
     }

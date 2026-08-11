@@ -7,6 +7,7 @@ mod error;
 mod image;
 mod input;
 mod output;
+mod overrides;
 mod sanitize;
 mod template;
 mod validate;
@@ -89,42 +90,8 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
         }
         Command::Draw(args) => {
             let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
-
-            let payload = match &args.file {
-                Some(path) => {
-                    // A payload file names its own elements. Silently
-                    // ignoring --id would let the user believe they had
-                    // renamed something they had not.
-                    if args.delivery.id.is_some() {
-                        return Err(CliError::usage(
-                            "--id cannot be used with --file: element ids come from the \
-                             payload. Edit the file's `id` fields instead.",
-                        ));
-                    }
-                    let loaded = cmd::draw::load_file(path)?;
-                    cmd::draw::apply_file_overrides(loaded, args)?
-                }
-                None => {
-                    let resolved = cmd::draw::resolve(args)?;
-                    cmd::draw::build_payload(args, &settings, &file, &resolved)?
-                }
-            };
-
-            for warning in validate::bounds_warnings(&payload) {
-                emitter.warn(&warning);
-            }
-
-            if cli.global.dry_run {
-                return emitter.dry_run(&payload);
-            }
-
-            let device = device::Device::connect(&settings)?;
-            if !args.delivery.keep {
-                device.clear().await?;
-            }
-            device.draw(&payload).await?;
-
-            emitter.success("drawn", Some(&payload))
+            let root = cmd::template::root(cli.global.template_dir.as_deref())?;
+            cmd::draw::run(args, &settings, &file, emitter, cli.global.dry_run, &root).await
         }
         Command::Template(command) => {
             let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
@@ -136,8 +103,15 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
                     cmd::template::validate(args, &root, &settings, emitter)
                 }
                 cli::TemplateCmd::Init(args) => cmd::template::init(args, &root, emitter),
-                cli::TemplateCmd::Run(_) => {
-                    Err(CliError::runtime("`busy template run` arrives in Task 7"))
+                cli::TemplateCmd::Run(args) => {
+                    // `run` is `draw` with the name always read as a
+                    // template, so the resolver never falls through to the
+                    // asset/typo-guard branch even if a same-named asset
+                    // exists.
+                    let mut args = args.clone();
+                    args.as_kind = Some(cli::AsArg::Template);
+                    cmd::draw::run(&args, &settings, &file, emitter, cli.global.dry_run, &root)
+                        .await
                 }
             }
         }

@@ -129,10 +129,6 @@ impl Template {
 /// `sanitize_values` — so the second element of the tuple is whether any of
 /// them needed it, for the caller to fold into a single once-per-invocation
 /// warning.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired up by later tasks in this phase")
-)]
 pub fn bind_variables(
     positional: Option<&str>,
     pairs: &[String],

@@ -1,39 +1,47 @@
 //! `busy draw` — put a named thing on the bar.
 //!
 //! The unifying idea is that `draw` takes a name which expands to
-//! `DisplayElements`. In this phase a name expands to a single `ImageElement`;
-//! Phase 4 inserts template lookup between the stock and asset rules, so keep
-//! `resolve` shaped for that insertion rather than restructuring it later.
+//! `DisplayElements`. A name expands to a single `ImageElement`, a device
+//! stock path, or — resolution rule 2, below — a rendered template.
+
+use std::path::Path;
 
 use crate::cli::{AsArg, DrawArgs};
+use crate::cmd::template::SANITIZED_VARIABLE_WARNING;
 use crate::config::{self, FileConfig, Settings};
-use crate::device::{AssetPath, DisplayElement, DisplayElements, ImageElement, Opacity, StockPath};
+use crate::device::{
+    AssetPath, Device, DisplayElement, DisplayElements, ImageElement, Opacity, StockPath,
+};
 use crate::error::CliError;
+use crate::output::Emitter;
+use crate::overrides::{self, Kind};
+use crate::template::{self, Template};
 
 /// What a `draw` name turned out to mean.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Resolved {
     Asset(AssetPath),
     Stock(StockPath),
+    Template(Box<Template>),
 }
 
 /// Resolve a name to a source.
 ///
 /// 1. `shared/…` is the spec's reserved namespace for device built-ins.
-/// 2. *(a local template directory — Phase 4, absent here.)*
-/// 3. anything else is an asset in this application's directory.
-pub fn resolve(args: &DrawArgs) -> Result<Resolved, CliError> {
+/// 2. a local template directory under `root`.
+/// 3. anything else is an asset in this application's directory. A message
+///    here cannot be meant for an image, so it is the typo guard: report the
+///    near-match instead of sending a doomed asset draw.
+pub fn resolve(args: &DrawArgs, root: &Path) -> Result<Resolved, CliError> {
     let name = args.name.as_deref().ok_or_else(|| {
         CliError::usage("`busy draw` needs a name or --file; see `busy draw --help`")
     })?;
 
-    let as_stock = match args.as_kind {
-        Some(AsArg::Stock) => true,
-        Some(AsArg::Image) => false,
-        None => name.starts_with("shared/"),
-    };
+    let forced_stock = matches!(args.as_kind, Some(AsArg::Stock));
+    let forced_image = matches!(args.as_kind, Some(AsArg::Image));
+    let forced_template = matches!(args.as_kind, Some(AsArg::Template));
 
-    if as_stock {
+    if forced_stock || (args.as_kind.is_none() && name.starts_with("shared/")) {
         let stock = StockPath::new(name).map_err(|error| {
             CliError::usage(format!(
                 "`{name}` is not a valid stock path: {error}. Device built-ins look like \
@@ -43,13 +51,102 @@ pub fn resolve(args: &DrawArgs) -> Result<Resolved, CliError> {
         return Ok(Resolved::Stock(stock));
     }
 
+    if forced_template || (!forced_image && root.join(name).join("template.toml").is_file()) {
+        let template = Template::load(root, name)?;
+        return Ok(Resolved::Template(Box::new(template)));
+    }
+
+    if args.message.is_some() {
+        let candidates = template::discover::list(root);
+        let hint = match template::discover::suggest(name, &candidates) {
+            Some(near) => format!(" Did you mean `{near}`?"),
+            None => String::new(),
+        };
+        return Err(CliError::usage(format!(
+            "`{name}` resolved to an image, and images take no message.{hint}"
+        )));
+    }
+
     let asset = AssetPath::new(name)
         .map_err(|error| CliError::usage(format!("`{name}` is not a valid asset name: {error}")))?;
     Ok(Resolved::Asset(asset))
 }
 
-/// Build the wire payload. Pure: no I/O, no network, so `--dry-run` and the
-/// real send are guaranteed to produce identical bytes.
+/// Resolve `args` to a payload, apply the flags well-defined for its kind,
+/// and either print it (`--dry-run`) or send it.
+///
+/// Shared by `Command::Draw` and `TemplateCmd::Run` — `run` is `draw` with
+/// the name always read as a template (`args.as_kind` forced to
+/// `AsArg::Template` by the caller) — so the two never diverge and a config
+/// warning is never printed twice.
+pub async fn run(
+    args: &DrawArgs,
+    settings: &Settings,
+    file: &FileConfig,
+    emitter: &Emitter,
+    dry_run: bool,
+    root: &Path,
+) -> Result<(), CliError> {
+    let (payload, kind) = match &args.file {
+        Some(path) => (load_file(path)?, Kind::File),
+        None => match resolve(args, root)? {
+            Resolved::Template(template) => {
+                let (vars, changed) =
+                    template::bind_variables(args.message.as_deref(), &args.vars)?;
+                if changed {
+                    emitter.warn(SANITIZED_VARIABLE_WARNING);
+                }
+
+                let rendered = template.render(&vars)?;
+                let payload = rendered.into_payload(&settings.app)?;
+
+                let report = template::validate::offline(&payload, &template.dir);
+                if !report.is_ok() {
+                    return Err(CliError::usage(report.errors.join("\n")));
+                }
+                for warning in &report.warnings {
+                    emitter.warn(warning);
+                }
+                (payload, Kind::Template)
+            }
+            resolved => {
+                let kind = if matches!(resolved, Resolved::Stock(_)) {
+                    Kind::Stock
+                } else {
+                    Kind::Image
+                };
+                (build_payload(args, settings, file, &resolved)?, kind)
+            }
+        },
+    };
+
+    overrides::reject_vars_unless_template(args, kind)?;
+    let payload = overrides::apply(payload, args, kind)?;
+
+    for warning in crate::validate::bounds_warnings(&payload) {
+        emitter.warn(&warning);
+    }
+
+    if dry_run {
+        return emitter.dry_run(&payload);
+    }
+
+    let device = Device::connect(settings)?;
+    if !args.delivery.keep {
+        device.clear().await?;
+    }
+    device.draw(&payload).await?;
+
+    emitter.success("drawn", Some(&payload))
+}
+
+/// Build the wire payload for an asset or stock draw. Pure: no I/O, no
+/// network, so `--dry-run` and the real send are guaranteed to produce
+/// identical bytes.
+///
+/// Never called with `Resolved::Template`: `run` renders a template on its
+/// own branch, well before this function, because a template arrives with
+/// its elements already decided rather than built from these flags.
 pub fn build_payload(
     args: &DrawArgs,
     settings: &Settings,
@@ -63,6 +160,9 @@ pub fn build_payload(
     let mut element = match resolved {
         Resolved::Asset(path) => ImageElement::asset(path.clone()),
         Resolved::Stock(path) => ImageElement::stock(path.clone()),
+        Resolved::Template(_) => {
+            unreachable!("run() renders a template on its own branch before calling build_payload")
+        }
     }
     .map_err(|error| CliError::usage(error.to_string()))?;
 
@@ -137,64 +237,4 @@ pub fn load_file(path: &std::path::Path) -> Result<DisplayElements, CliError> {
             path.display()
         ))
     })
-}
-
-/// Apply the `--file` delivery overrides that are well-defined against an
-/// already-loaded payload.
-///
-/// CLI flags conventionally override the contents of a file a tool reads, so
-/// a flag that *can* be honoured unambiguously is. `--priority` and `--led`
-/// are payload-level fields on `DisplayElements` — there is exactly one of
-/// each per payload — so overriding is unambiguous. A flag that is absent
-/// leaves the file's own value untouched; substituting a default here would
-/// silently overwrite a value the file never asked to have replaced.
-///
-/// `--opacity`, `-x`/`-y`/`--align`, `--screen`, and `--timeout` are
-/// per-element fields, but a payload file may hold several elements with no
-/// principled way to pick which one a single flag applies to, so those are
-/// rejected outright rather than silently ignored or applied to an arbitrary
-/// element. (`--id` is rejected earlier, in `main.rs`; `--until` has no
-/// field on `draw` at all, so clap rejects it before either function runs.)
-pub fn apply_file_overrides(
-    mut payload: DisplayElements,
-    args: &DrawArgs,
-) -> Result<DisplayElements, CliError> {
-    if args.opacity.is_some() {
-        return Err(file_override_rejected("--opacity"));
-    }
-    if args.placement.x.is_some() {
-        return Err(file_override_rejected("-x/--x"));
-    }
-    if args.placement.y.is_some() {
-        return Err(file_override_rejected("-y/--y"));
-    }
-    if args.placement.align.is_some() {
-        return Err(file_override_rejected("--align"));
-    }
-    if args.placement.screen.is_some() {
-        return Err(file_override_rejected("--screen"));
-    }
-    if args.delivery.timeout.is_some() {
-        return Err(file_override_rejected("--timeout"));
-    }
-
-    if let Some(input) = &args.delivery.priority {
-        let priority_value = config::parse_priority(input)?;
-        let priority = crate::device::Priority::new(priority_value)
-            .map_err(|error| CliError::usage(format!("invalid --priority: {error}")))?;
-        payload.priority = Some(priority);
-    }
-
-    if let Some(input) = &args.delivery.led {
-        payload.led_notification_color = Some(crate::color::parse(input)?);
-    }
-
-    Ok(payload)
-}
-
-fn file_override_rejected(flag: &str) -> CliError {
-    CliError::usage(format!(
-        "{flag} cannot be used with --file: it applies to a single element, but a payload \
-         file may hold several. Edit the file's own fields instead."
-    ))
 }

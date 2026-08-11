@@ -14,7 +14,7 @@ use crate::template::{self, Template, discover, validate};
 /// explanation — but the subject is a template variable rather than "the
 /// message", since here it is one or more `--var`/placeholder values rather
 /// than a single positional argument.
-const SANITIZED_VARIABLE_WARNING: &str = "one or more template variable values contained \
+pub(crate) const SANITIZED_VARIABLE_WARNING: &str = "one or more template variable values contained \
      characters the bar's bitmap-ASCII fonts cannot render (smart quotes, dashes, or similar) \
      and were transliterated to plain ASCII";
 
