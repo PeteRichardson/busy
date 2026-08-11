@@ -73,13 +73,19 @@ printf '  omitted=%s top_left=%s -> %s\n' "$none" "$tl" \
   "$([ "$none" = "$tl" ] && echo 'MATCH (device default is top_left)' || echo 'CHANGED — the device default is no longer top_left')"
 curl -s -H "$AUTH" -X DELETE "$BAR/display/draw?application_name=$APP" >/dev/null
 
-say "10. oversized images — expect a 200 and a CROPPED render, not a scaled one"
+say "10. oversized images — expect a 400: the device refuses to draw anything larger than the panel"
 # A 200x100 canvas: a solid-red 72x16 rectangle filling the exact top-left
-# corner, blue everywhere else. Genuinely oversized in both dimensions —
-# design doc §1 measured crop behaviour with a 200x100 source. If the
-# device crops from the top-left with no scaling, the whole visible screen
-# reads back red; if it scales instead, red shrinks to a small corner and
-# blue dominates.
+# corner, blue everywhere else. Genuinely oversized in both dimensions.
+#
+# Measured 2026-08-10 on API 25.0.0: `display/draw` rejects this with
+# 400 `Image ... exceeds display dimensions 72x16.` even though the upload
+# succeeded. Design doc §1 originally recorded a silent 200-and-crop; see
+# the correction there. This step now pins the 400.
+#
+# If the device ever accepts an oversized draw again, the readback below
+# characterises what it actually did: crop from the top-left leaves the
+# whole visible screen red, whereas scaling shrinks red to a corner and
+# lets blue dominate.
 #
 # Verified before embedding, three independent ways: `file` and
 # `sips -g pixelWidth -g pixelHeight` both report "200 x 100"; a
@@ -95,10 +101,14 @@ curl -s -H "$AUTH" -X DELETE "$BAR/display/draw?application_name=$APP" >/dev/nul
 draw_code=$(curl -s -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BAR/display/draw" \
   -o "$PROBE.drawresp" -w '%{http_code}' \
   -d "{\"application_name\":\"$APP\",\"priority\":95,\"elements\":[{\"id\":\"b\",\"type\":\"image\",\"path\":\"big.png\",\"x\":0,\"y\":0,\"align\":\"top_left\"}]}")
-if [ "$draw_code" != 200 ]; then
-  printf '  draw: expect 200, got %s -> CHANGED (design doc §1 measured 200 + a silent crop here)\n' "$draw_code"
+if [ "$draw_code" = 400 ] && grep -q 'exceeds display dimensions' "$PROBE.drawresp"; then
+  printf '  draw: got 400 -> MATCH (the device refuses oversized images)\n'
+  printf '  body: %s\n' "$(cat "$PROBE.drawresp")"
+elif [ "$draw_code" != 200 ]; then
+  printf '  draw: expect 400 "exceeds display dimensions", got %s -> CHANGED\n' "$draw_code"
   printf '  body: %s\n' "$(cat "$PROBE.drawresp")"
 else
+  printf '  draw: expect 400, got 200 -> CHANGED (the device now accepts oversized draws)\n'
   sleep 0.8
   curl -s -H "$AUTH" "$BAR/screen?display=0" | base64 -d > "$PROBE.frame"
   # /screen is BGR888 for the front panel — measured directly: a solid
@@ -124,9 +134,9 @@ else
       }
       printf "  red=%d blue=%d other=%d (of %d)\n", red, blue, other, total
       if (red * 2 > total) {
-        print "  CROPPED (as measured)"
+        print "  ... and it CROPPED from the top-left (the original design doc reading)"
       } else {
-        print "  CHANGED -- the device no longer crops this the way design doc §1 measured"
+        print "  ... and it SCALED the image to fit"
       }
     }
   '

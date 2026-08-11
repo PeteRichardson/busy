@@ -59,8 +59,10 @@ drawn at all.
 later, in a different command, as a device error naming an `/ext` path. That seam is bad
 enough to determine where conversion belongs (§3).
 
-`scripts/probe-device.sh` should gain assertions for the crop and the PNG-only decode, so
-a firmware change to either is caught rather than silently altering behaviour.
+`scripts/probe-device.sh` should gain assertions for the oversized-image rejection and the
+PNG-only decode, so a firmware change to either is caught rather than silently altering
+behaviour. It now pins the `400`, and reads the frame back to characterise the behaviour
+if the device ever accepts an oversized draw again.
 
 ---
 
@@ -143,8 +145,9 @@ busy draw logo.png                           # drawn on the FRONT — device cro
 busy draw logo.png --screen back             # what was meant
 ```
 
-The second line is a real hazard, not a hypothetical: the device crops without complaint
-(§1). `draw` should warn when an asset was plainly fitted for the other panel — see the
+The second line is a real hazard, not a hypothetical: a 160×80 asset exceeds the 72×16
+front panel, so the device rejects the draw outright (§1) — under the behaviour originally
+recorded there it cropped without complaint instead, which was worse. `draw` should warn when an asset was plainly fitted for the other panel — see the
 dimension-check risk in §10 — and until that exists, `--help` for `asset upload --screen`
 must say that the panel choice has to be repeated at draw time.
 
