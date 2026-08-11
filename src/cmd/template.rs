@@ -1,6 +1,8 @@
 //! `busy template` — manage and run templates.
 
-use crate::cli::{TemplateShowArgs, TemplateValidateArgs};
+use include_dir::{Dir, include_dir};
+
+use crate::cli::{TemplateInitArgs, TemplateShowArgs, TemplateValidateArgs};
 use crate::config::Settings;
 use crate::error::CliError;
 use crate::output::Emitter;
@@ -184,4 +186,98 @@ pub fn validate(
         return Err(CliError::usage(failures.join("\n")));
     }
     emitter.success(&format!("{} template(s) OK", names.len()), None)
+}
+
+/// The shipped example templates, embedded at compile time.
+///
+/// Adding an example is a commit to `templates/`, not a code change: `init`
+/// walks this tree rather than a hand-maintained list. Whole directories are
+/// embedded rather than single files, so a future example carrying a PNG works
+/// with no change here.
+static EXAMPLES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates");
+
+/// Write the shipped example templates into `root`.
+///
+/// Each example is its own directory (`error/`, `ok/`, …) under `EXAMPLES`;
+/// one that already exists on disk is left alone unless `--force` is given,
+/// so re-running `init` after hand-editing an example never clobbers it.
+pub fn init(
+    args: &TemplateInitArgs,
+    root: &std::path::Path,
+    emitter: &Emitter,
+) -> Result<(), CliError> {
+    std::fs::create_dir_all(root).map_err(|error| {
+        CliError::runtime(format!("could not create {}: {error}", root.display()))
+    })?;
+
+    let mut written = Vec::new();
+    let mut skipped = Vec::new();
+
+    for dir in EXAMPLES.dirs() {
+        let Some(name) = dir.path().file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        // `get_file` wants the path as stored, which includes the directory
+        // prefix — `get_file("template.toml")` returns None.
+        if dir.get_file(dir.path().join("template.toml")).is_none() {
+            continue;
+        }
+
+        let destination = root.join(name);
+        if destination.exists() && !args.force {
+            skipped.push(name.to_owned());
+            continue;
+        }
+
+        std::fs::create_dir_all(&destination).map_err(|error| {
+            CliError::runtime(format!(
+                "could not create {}: {error}",
+                destination.display()
+            ))
+        })?;
+
+        for file in dir.files() {
+            let Some(leaf) = file.path().file_name() else {
+                continue;
+            };
+            let target = destination.join(leaf);
+            std::fs::write(&target, file.contents()).map_err(|error| {
+                CliError::runtime(format!("could not write {}: {error}", target.display()))
+            })?;
+        }
+        written.push(name.to_owned());
+    }
+
+    // Human text stays prose; `--json` gets `written`/`skipped` as their own
+    // addressable arrays rather than folding both into one formatted
+    // `summary` blob — the shape Task 5 (`template list`/`show`) fixed twice
+    // over (see `Emitter::success_items`'s doc comment). A script that wants
+    // to know exactly which examples arrived or were kept can read the
+    // arrays directly instead of parsing sentences back out of a string.
+    let mut report = String::new();
+    if !written.is_empty() {
+        report.push_str(&format!(
+            "wrote {} to {}\n",
+            written.join(", "),
+            root.display()
+        ));
+    }
+    if !skipped.is_empty() {
+        report.push_str(&format!(
+            "kept your existing {} (use --force to replace)\n",
+            skipped.join(", ")
+        ));
+    }
+    if report.is_empty() {
+        report.push_str("no examples are bundled with this build");
+    }
+
+    emitter.success_fields(
+        report.trim_end(),
+        serde_json::json!({
+            "written": written,
+            "skipped": skipped,
+        }),
+        true,
+    )
 }

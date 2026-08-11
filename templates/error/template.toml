@@ -1,0 +1,26 @@
+# A red error message beside a stop icon.
+#
+# `{{ message }}` has no default, so this template REQUIRES a message:
+#   busy draw error "Build failed"
+#
+# The icon is a device built-in (`shared/…`), so nothing needs uploading.
+description = "Red error text beside a stop icon"
+priority = 95
+
+[[elements]]
+id = "icon"
+type = "image"
+stock_path = "shared/error_front_8x8.image"
+x = 4
+y = 8
+align = "mid_left"
+
+[[elements]]
+id = "message"
+type = "text"
+text = "{{ message }}"
+x = 16
+y = 8
+align = "mid_left"
+font = "small"
+color = "#ff0000ff"

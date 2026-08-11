@@ -21,6 +21,7 @@ etcetera = "0.11.0"
 # directly, so depend on it explicitly rather than relying on that.
 http = "1.5.0"
 image = { version = "0.25.9", default-features = false, features = ["png", "jpeg", "gif"] }
+include_dir = "0.7.4"
 jiff = "0.2.35"
 minijinja = "2.23.0"
 serde = { version = "1.0.229", features = ["derive"] }

@@ -135,9 +135,7 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
                 cli::TemplateCmd::Validate(args) => {
                     cmd::template::validate(args, &root, &settings, emitter)
                 }
-                cli::TemplateCmd::Init(_) => {
-                    Err(CliError::runtime("`busy template init` arrives in Task 6"))
-                }
+                cli::TemplateCmd::Init(args) => cmd::template::init(args, &root, emitter),
                 cli::TemplateCmd::Run(_) => {
                     Err(CliError::runtime("`busy template run` arrives in Task 7"))
                 }

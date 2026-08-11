@@ -1,0 +1,18 @@
+# A green confirmation.
+#
+# `message` is OPTIONAL here — minijinja's own `default` filter supplies one,
+# so `busy draw ok` works with no arguments:
+#   busy draw ok
+#   busy draw ok "Deploy finished"
+description = "Green confirmation text"
+priority = 95
+
+[[elements]]
+id = "message"
+type = "text"
+text = "{{ message | default('Done') }}"
+x = 36
+y = 8
+align = "center"
+font = "small"
+color = "#00ff00ff"
