@@ -59,6 +59,12 @@ curl -s -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BAR/display/dra
 say "8. stock assets"
 curl -s -H "$AUTH" "$BAR/storage/list?path=/ext/apps_assets/shared/images" | head -c 400; echo
 
+say "8b. the stock asset the shipped `error` template uses"
+curl -s -H "$AUTH" "$BAR/storage/list?path=/ext/apps_assets/shared/images" \
+  | grep -q 'error_front_8x8' \
+  && echo "  MATCH (shared/error_front_8x8.image is present)" \
+  || echo "  CHANGED -- the error template's icon is gone; pick another"
+
 say "9. implicit align — expect the no-align frame to equal top_left"
 frame() {
   curl -s -H "$AUTH" -X DELETE "$BAR/display/draw?application_name=$APP" >/dev/null

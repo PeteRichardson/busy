@@ -14,6 +14,11 @@ busy asset upload ./logo.png       # fit for the front panel, stored as logo.png
 busy draw logo.png                 # draw it
 busy draw shared/checkmark_front_8x8.image
 busy asset list
+
+busy template init                 # write the example templates
+busy draw ok                       # a template with no required variables
+busy draw error "Build failed"     # a template that requires a message
+git log -1 --format=%s | busy draw error -
 ```
 
 Every per-invocation flag has a short form; the long form always works too.
@@ -31,7 +36,9 @@ take a position, and `--yes` on `busy asset delete`, which takes none. The two
 never appear on the same subcommand. The connection options — `--addr`, `--app`, `--token`,
 `--api-prefix`, `--http-timeout` — are deliberately long-only: they are typed
 rarely, a global short is reserved across every subcommand, and a short
-`--token` would invite secrets into shell history and `ps`.
+`--token` would invite secrets into shell history and `ps`. `--var` and
+`--template-dir` are long-only for the same reason: they're rarely typed, and
+templates are the exception, not the common case.
 
 ## Install
 
@@ -99,13 +106,27 @@ stays out of your shell history and out of `ps`.
   it is about to destroy, then asks — `--yes` skips the prompt for CI, and
   without it the command refuses outright when stdin isn't a tty rather than
   prompting into the void.
-- **`--until` works on `busy text` but not on `busy draw`.** It's a usage
-  error there (exit 2), pointing at `--timeout`.
+- **`--until` works on `busy text` but not on `busy draw`.** `draw` never
+  declares the flag at all, so clap itself rejects it (exit 2) rather than
+  the CLI's own usage-error path.
 - **`busy draw --file` draws a raw payload file, not a single element.**
   `--priority` and `--led` override the file's own values when given, and
   `--keep` works as usual; `--opacity`, `-x`/`-y`, `--align`, `--screen`,
-  `--timeout`, `--id`, and `--until` are all usage errors, because a payload
-  file owns its per-element fields and may hold many elements.
+  `--timeout`, and `--id` are all usage errors, because a payload file owns
+  its per-element fields and may hold many elements.
+- **Templates.** `busy template init` writes examples into
+  `~/.config/busy/templates/`; each is a directory with a `template.toml` that
+  is the API payload plus a `description`. `busy draw <name>` renders and draws
+  one. Variables are minijinja (`{{ message }}`), the positional binds to
+  `message`, and `--var k=v` supplies the rest. Every substitution is escaped,
+  so a quote in a commit subject is safe.
+- **Templates take flags like `--file` does.** `--priority` and `--led`
+  override the template's own values; per-element flags (`-x`, `--align`,
+  `--opacity`, `--timeout`, `--id`) are errors, because a template may hold
+  several elements. Expose anything else as a `{{ variable }}`.
+- **Adding an example.** Commit a directory to `templates/` in this repo and
+  `busy template init` picks it up — no code change. `tests/examples.rs`
+  validates every one, so a broken template fails the build.
 - `--dry-run` prints the exact JSON that would be sent and never changes
   anything on the device — read-only calls (like the file listing
   `busy asset delete --dry-run` makes so it can name what it would destroy)
