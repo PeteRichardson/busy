@@ -3,9 +3,13 @@
 //! Everything else imports the model and value types from here, so an upstream
 //! module reshuffle is a one-file fix rather than a shotgun edit.
 
-pub use busylib::model::assets::ImageElement;
+// `ImageSource` has no caller yet in this crate — Task 4 of this phase needs
+// it to find a template's referenced asset paths. Re-exported now, ahead of
+// that caller, rather than adding a second `pub use` statement later.
+#[expect(unused_imports, reason = "wired up by Task 4 of this phase")]
 pub use busylib::model::assets::{
-    Align, DisplayElement, DisplayElements, ElementKind, Font, Lifetime, Screen, TextElement,
+    Align, DisplayElement, DisplayElements, ElementKind, Font, ImageElement, ImageSource, Lifetime,
+    Screen, TextElement,
 };
 pub use busylib::model::storage::StorageListElement;
 pub use busylib::types::app_name::AppName;

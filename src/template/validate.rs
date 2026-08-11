@@ -1,0 +1,1 @@
+//! Offline template checks.

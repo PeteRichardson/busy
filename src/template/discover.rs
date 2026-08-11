@@ -36,6 +36,12 @@ pub fn root(flag: Option<&Path>) -> Option<PathBuf> {
 ///
 /// The name is joined onto the root, so `..` or a separator would let a
 /// template name reach outside it. Same charset as `AssetName`.
+// `Template::load` calls this, but `Template::load` itself has no production
+// caller until Task 5 wires `busy template ...` commands — so this remains
+// unreachable from `main` under a non-test build. Reachability, for the
+// dead-code pass, does not propagate through a callee whose only caller is
+// itself dead; verified by removing this attribute and building, which
+// produced the warning back.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "wired up by later tasks in this phase")
