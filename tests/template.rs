@@ -358,3 +358,49 @@ async fn a_failed_listing_does_not_block_the_draw() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn golden_payload_for_a_rendered_multi_element_template() {
+    // Pins that a template really does produce the same wire bytes a
+    // hand-written payload would, including that `rectangle` — an element
+    // kind this project does not model — survives untouched.
+    let dir = std::env::temp_dir().join("busy-tpl-golden");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("status")).expect("temp dir");
+    std::fs::write(
+        dir.join("status/template.toml"),
+        r#"description = "text plus a progress bar"
+priority = 95
+[[elements]]
+id = "message"
+type = "text"
+text = "{{ message }}"
+x = 2
+y = 8
+align = "mid_left"
+font = "small"
+[[elements]]
+id = "bar"
+type = "rectangle"
+width = 40
+height = 3
+x = 2
+y = 14
+align = "mid_left"
+"#,
+    )
+    .expect("write");
+
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["--dry-run", "draw", "status", "Deploying"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    insta::assert_snapshot!(String::from_utf8_lossy(&output.stdout));
+}

@@ -48,7 +48,9 @@ busy draw error "Build failed" --var code=500
   │
   ├─ discover::resolve(name)            → template dir, or NotFound + did-you-mean
   ├─ render::analyse(source)            → required variables; rejects include/import/extends
-  ├─ bind(positional, --var)            → error on a missing variable, or on both message forms
+  ├─ bind(positional, --var)            → error on a missing variable/both message forms,
+  │                                        then sanitize_values: to_ascii each bound value,
+  │                                        warning once if any changed (§3.3) — before render
   ├─ render::render(source, vars)       → TOML text, every substitution auto-escaped
   ├─ toml::from_str::<TemplateFile>     → description + elements (§2.1)
   ├─ TemplateFile::into_payload(app)    → DisplayElements
@@ -186,9 +188,32 @@ Offline checks, none touching the device:
 - **Duplicate element ids.** Ids are the handle for `--keep` updates, so a duplicate makes a
   template's own elements overwrite each other.
 - **A referenced local asset file that does not exist** next to `template.toml`.
-- **Non-ASCII text**, reusing `sanitize::to_ascii` rather than writing a second copy. This is
-  a **warning, not an error**, matching how `busy text` treats the same input: the text is
-  transliterated and the user is told. A template is not more fragile than a message.
+
+**Correction made during implementation.** This section originally listed non-ASCII text as a
+third offline check here, reusing `sanitize::to_ascii` to turn it into a warning rather than an
+error. **That is unimplementable as written:** busylib's `Text` is a `string_newtype!` validated
+by `printable_ascii`, and validation runs at *deserialization* — a non-ASCII character fails
+inside `toml::from_str::<TemplateFile>` (i.e. inside `Template::render`, §2), before any
+`validate.rs` check ever sees the value. The branch was provably unreachable and was removed in
+Task 4; see the comment on `offline` in `src/template/validate.rs` for the fixture that proves
+it (`toml::from_str` panics with `"invalid display text..."` before reaching `offline`).
+
+What actually shipped, in Task 5, is better and belongs here instead:
+
+- **Variable values** — the `--var` and positional-message inputs bound before rendering — are
+  sanitized with `sanitize::to_ascii` *before* substitution (§2's bind step), warning once per
+  invocation exactly the way `busy text` warns for its message. This is the case that matters
+  in practice: the README's own example pipes `git log -1 --format=%s` into a template, and
+  commit subjects contain smart quotes routinely.
+- **Literal non-ASCII written directly into a template file** still hard-fails, with an error
+  naming the template (`template \`x\` did not produce a valid template file: ...`). That is
+  deliberate and different in kind from a bad variable: the template author owns that file and
+  can fix it, and `busy template validate` is the tool that surfaces it.
+
+The spec's stated goal — *a template is not more fragile than a message* — is unchanged, and is
+now actually true for the case that matters: a stray smart quote piped in from the shell gets
+the same sanitize-and-warn treatment `busy text` gives it, whether it arrives as a message or
+lands in a template through `{{ message }}`.
 
 Bounds and overflow checks come free: once rendered, a template *is* a `DisplayElements`, so
 the existing `validate::bounds_warnings` applies unchanged. `template validate` runs it and
@@ -412,7 +437,10 @@ The unit tests carry the weight, because the whole pipeline up to the presence c
 - **`discover.rs`:** root precedence; a directory without `template.toml` skipped; a name
   containing `/` rejected; `suggest` returning a near-match and staying silent on a distant
   one.
-- **`template/validate.rs`:** duplicate ids; a missing local asset file; non-ASCII text.
+- **`template/validate.rs`:** duplicate ids; a missing local asset file. (Not non-ASCII text:
+  see §3.3's correction — that check lives in `template/mod.rs::sanitize_values`, tested there
+  and in `tests/template.rs` via a smart-quote `--var`/message value that gets transliterated
+  with a warning, plus a literal smart quote in a template file that still hard-fails.)
 - **`overrides.rs`:** every cell of the §4 table — this is the one place a table is the test.
 - **`tests/template.rs`:** the five subcommands, `init` skipping an existing directory and
   `--force` overwriting it, and resolution rule 2 including `--as` and the
@@ -433,7 +461,7 @@ The unit tests carry the weight, because the whole pipeline up to the presence c
 
 ## 9. Corrections to the inherited specs
 
-Both are recorded here rather than silently diverged from; the implementation plan carries
+All four are recorded here rather than silently diverged from; the implementation plan carries
 them into the source documents.
 
 1. **Architecture doc §7 and command-surface §3** assume CLI flags override template values
@@ -449,6 +477,16 @@ them into the source documents.
    `description` field the doc uses but `DisplayElements` silently discards. The claim that
    matters — `rectangle`, `countdown`, and `animation` for free — is unaffected and was
    verified end to end.
+4. **This document's own §3.3** originally listed non-ASCII text as an offline `validate.rs`
+   check producing a warning. Corrected in §3.3, and — like #3 — this is a measurement, not a
+   judgment: busylib's `Text` validates ASCII at *deserialization*, so a non-ASCII character
+   fails inside `toml::from_str::<TemplateFile>` before any `validate.rs` code runs; the branch
+   was unreachable and was removed in Task 4. What shipped instead (Task 5) sanitizes `--var`
+   and message values with `sanitize::to_ascii` before substitution, warning once per
+   invocation — the same treatment `busy text` gives its message, and the case that actually
+   matters given how often piped-in text (e.g. a commit subject) carries smart quotes. A
+   literal non-ASCII character written into the template file itself still hard-fails, naming
+   the template, which is unchanged and correct: the template author owns that file.
 
 ---
 

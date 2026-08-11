@@ -450,8 +450,7 @@ struct ScrollArgs {
 #[command(next_help_heading = "Delivery")]
 struct DeliveryArgs {
     #[arg(long)] priority: Option<PriorityArg>,       // number or low|normal|high|urgent
-    #[arg(long, conflicts_with = "until")] timeout: Option<u32>,
-    #[arg(long)] until: Option<TimeSpec>,
+    #[arg(long)] timeout: Option<u32>,
     #[arg(long)] led: Option<ColorArg>,               // led_notification_color
     /// Element id to write, so repeat invocations update in place
     #[arg(long, default_value = "message")] id: String,
@@ -459,6 +458,14 @@ struct DeliveryArgs {
     #[arg(long)] keep: bool,
 }
 ```
+
+**`until` is not part of `DeliveryArgs`.** `DeliveryArgs` is flattened into both
+`TextArgs` and `DrawArgs`, and `draw` has no use for `--until` — it addresses
+several element kinds, not just text with a lifetime. Issue #12 was exactly this:
+`--until` sat in the shared struct, so `draw --help` advertised it and then
+rejected it at runtime. The fix (a prerequisite to Phase 4a) declares `until`
+directly on `TextArgs`, pinned to the same "Delivery" help heading so the split
+is invisible to `text --help`; `draw` simply never offers the flag.
 
 Put the units in the doc comments. `scroll_rate` being pixels *per minute* is
 surprising enough that it belongs in `--help`.
@@ -530,10 +537,16 @@ snapshot tests assert against and the first thing wanted when the bar shows noth
 
 ## 7. Templates
 
-**The key move: a template deserializes directly into
-`busylib::model::assets::DisplayElements`.** The template file *is* the API payload,
-which means animation, countdown, and rectangle elements come along for free without
-this project modeling them.
+**The key move: a template's `elements` deserialize directly into
+`busylib::model::assets::DisplayElement`.** The template file is the API payload
+minus its envelope, which means animation, countdown, and rectangle elements
+come along for free without this project modeling them.
+
+A template does *not* deserialize into `DisplayElements` itself: that type
+requires `application_name`, which comes from `--app`/`BUSY_APP`/the config
+file and must not be baked into a template. A thin `TemplateFile` wrapper
+supplies the envelope and adds the `description` field this document's own
+example uses. See `docs/specs/2026-08-11-phase-4a-templates-design.md` §2.1.
 
 Pipeline:
 
@@ -576,7 +589,9 @@ scroll_rate = 600
 
 - **Substitution:** `minijinja` over the raw TOML text *before* parsing — simplest,
   and lets variables appear in any field. Values from `-m` (binds to `message`),
-  repeated `--var k=v`, and env.
+  repeated `--var k=v`, and env. Every substitution is auto-escaped for a TOML
+  basic string, so a quote in a commit subject cannot corrupt the document; `| safe`
+  opts out.
 - **Asset sync:** content-hash each referenced local file and skip upload if already
   present. `assets/upload` sends bytes as-is with no conversion, so the CLI must
   resize/re-encode images for the target display (`image` crate). This is the one

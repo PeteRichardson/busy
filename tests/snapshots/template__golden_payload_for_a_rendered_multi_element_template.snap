@@ -1,0 +1,28 @@
+---
+source: tests/template.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+{
+  "application_name": "busy",
+  "priority": 95,
+  "elements": [
+    {
+      "id": "message",
+      "x": 2,
+      "y": 8,
+      "align": "mid_left",
+      "type": "text",
+      "text": "Deploying",
+      "font": "small"
+    },
+    {
+      "id": "bar",
+      "x": 2,
+      "y": 14,
+      "align": "mid_left",
+      "type": "rectangle",
+      "width": 40,
+      "height": 3
+    }
+  ]
+}

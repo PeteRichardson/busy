@@ -192,17 +192,25 @@ doomed asset draw. Two guards:
 
 ### 3.3 Inert flags are errors
 
-`busy draw`'s `--help` is the union of Style, Placement, Scroll, Delivery, `--var` and
-`--opacity`, grouped by `next_help_heading`. Some of those are meaningless for some
-inputs.
+`busy draw` offers Placement, Delivery, `--opacity`, and `--var`. It deliberately
+does **not** offer Style or Scroll: `--font`, `--color`, `--width` and
+`--scroll-rate` are per-element, and by the override rule below they would be
+errors on every input `draw` accepts — flags that exist only to be refused. The
+right response to an inapplicable flag is not to offer it.
 
 **Passing a flag that cannot apply to the resolved input is a hard error, not a warning
-and not a silent no-op.** `--font` on an image draw fails. `--opacity` on a text-only
-template fails. `--var` on an asset draw fails. This keeps faith with §5's "never
-silently do nothing", and it is the only defence against the union surface quietly
-swallowing a typo.
+and not a silent no-op.** `--opacity` on a text-only template fails. `--var` on an
+asset draw fails. This keeps faith with §5's "never silently do nothing", and it is
+the only defence against the offered surface quietly swallowing a typo.
 
 The check runs after resolution, since resolution determines what applies.
+
+**Templates take the same override rule as `--file`.** Payload-level flags
+(`--priority`, `--led`) override the template's own values when given;
+per-element flags (`-x`/`-y`, `--align`, `--screen`, `--timeout`, `--opacity`,
+`--id`) are hard errors, because a template may hold several elements with no
+principled way to pick which one a single flag applies to. Recorded in
+`docs/specs/2026-08-11-phase-4a-templates-design.md` §4.
 
 ### 3.4 `--id` under `draw`
 
