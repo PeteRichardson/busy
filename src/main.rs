@@ -91,7 +91,16 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
         Command::Draw(args) => {
             let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
             let root = cmd::template::root(cli.global.template_dir.as_deref())?;
-            cmd::draw::run(args, &settings, &file, emitter, cli.global.dry_run, &root).await
+            cmd::draw::run(
+                args,
+                &settings,
+                &file,
+                emitter,
+                cli.global.dry_run,
+                &root,
+                cmd::draw::Invocation::Draw,
+            )
+            .await
         }
         Command::Template(command) => {
             let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
@@ -111,13 +120,25 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
                     // `file`/`as_kind` fields (see `cli::DrawCommon`'s doc
                     // comment), so building a `DrawArgs` here is the only
                     // place either is set for a `run` invocation.
+                    // `Invocation::TemplateRun` only changes error phrasing
+                    // (see `cmd::draw::Invocation`) — a bare `busy template
+                    // run` now names itself, not `busy draw --file`.
                     let args = cli::DrawArgs {
+                        name: args.name.clone(),
                         common: args.common.clone(),
                         file: None,
                         as_kind: Some(cli::AsArg::Template),
                     };
-                    cmd::draw::run(&args, &settings, &file, emitter, cli.global.dry_run, &root)
-                        .await
+                    cmd::draw::run(
+                        &args,
+                        &settings,
+                        &file,
+                        emitter,
+                        cli.global.dry_run,
+                        &root,
+                        cmd::draw::Invocation::TemplateRun,
+                    )
+                    .await
                 }
             }
         }

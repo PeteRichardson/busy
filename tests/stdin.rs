@@ -42,6 +42,36 @@ fn empty_stdin_is_a_clear_error() {
 }
 
 #[test]
+fn empty_stdin_on_a_draw_does_not_blame_busy_text() {
+    // `-` reads stdin on `draw`/`template run` too now, so the empty-stdin
+    // message must not name `busy text` specifically — it used to, back when
+    // `busy text -` was the only path that could ever reach it.
+    let dir = std::env::temp_dir().join("busy-stdin-empty-draw");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("say")).expect("temp dir");
+    std::fs::write(
+        dir.join("say/template.toml"),
+        "[[elements]]\nid = \"a\"\ntype = \"text\"\ntext = \"{{ message }}\"\nfont = \"small\"\n",
+    )
+    .expect("write");
+
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["--dry-run", "draw", "say", "-"])
+        .write_stdin("")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("stdin"), "got {stderr}");
+    assert!(
+        !stderr.contains("busy text"),
+        "must not name a command the user did not run, got {stderr}"
+    );
+}
+
+#[test]
 fn a_message_starting_with_a_dash_is_reachable_after_a_double_dash() {
     // `--` terminates option parsing, so clap accepts a value starting with
     // `-` instead of trying to parse it as a flag cluster. This is not the

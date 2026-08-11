@@ -46,8 +46,11 @@ fn read_from(reader: &mut impl std::io::Read) -> Result<String, CliError> {
     }
 
     if message.is_empty() {
+        // Generic on purpose: `-` reads stdin on `busy text`, `busy draw`,
+        // and `busy template run` alike (see this function's doc comment),
+        // so this must not name whichever one happened to be first.
         return Err(CliError::usage(
-            "stdin was empty; `busy text -` expects a message on stdin",
+            "stdin was empty; `-` expects a message on stdin",
         ));
     }
 

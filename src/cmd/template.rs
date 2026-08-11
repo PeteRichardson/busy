@@ -160,10 +160,23 @@ pub fn validate(
     // template, exactly like the offline-validation errors already did a few
     // lines below.
     for name in &names {
+        // Only prefix a message with the template's own name when validating
+        // more than one: with a single name (`busy template validate nope`),
+        // the error already names the template itself ("no template named
+        // `nope`"), so an added `nope: ` prefix repeats it for no reason.
+        // With several, the prefix is what tells the messages apart.
+        let label = |message: &str| -> String {
+            if names.len() > 1 {
+                format!("{name}: {message}")
+            } else {
+                message.to_owned()
+            }
+        };
+
         let template = match Template::load(root, name) {
             Ok(template) => template,
             Err(error) => {
-                failures.push(format!("{name}: {error}"));
+                failures.push(label(&error.to_string()));
                 continue;
             }
         };
@@ -174,7 +187,7 @@ pub fn validate(
         let variables = match template.required_variables() {
             Ok(variables) => variables,
             Err(error) => {
-                failures.push(format!("{name}: {error}"));
+                failures.push(label(&error.to_string()));
                 continue;
             }
         };
@@ -195,14 +208,14 @@ pub fn validate(
         let file = match template.render(&vars) {
             Ok(file) => file,
             Err(error) => {
-                failures.push(format!("{name}: {error}"));
+                failures.push(label(&error.to_string()));
                 continue;
             }
         };
         let payload = match file.into_payload(&settings.app) {
             Ok(payload) => payload,
             Err(error) => {
-                failures.push(format!("{name}: {error}"));
+                failures.push(label(&error.to_string()));
                 continue;
             }
         };
@@ -218,10 +231,10 @@ pub fn validate(
             .iter()
             .chain(&report.warnings)
         {
-            emitter.warn(&format!("{name}: {warning}"));
+            emitter.warn(&label(warning));
         }
         for error in &report.errors {
-            failures.push(format!("{name}: {error}"));
+            failures.push(label(error));
         }
     }
 

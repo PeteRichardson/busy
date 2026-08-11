@@ -25,6 +25,33 @@ pub enum Resolved {
     Template(Box<Template>),
 }
 
+/// Which command is resolving a name — `run` shares `resolve`/`run` with
+/// `Command::Draw` entirely (see `run`'s doc comment below), but the two
+/// commands are not interchangeable from the user's point of view: `run` has
+/// no `--file`, and a bare `busy template run` with no name is not the same
+/// mistake as a bare `busy draw`. Threaded through only to phrase the "no
+/// name" error against the command the user actually typed, rather than
+/// always naming `draw` (and its `--file`, which `run` does not have) even
+/// when `run` is what ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Invocation {
+    Draw,
+    TemplateRun,
+}
+
+impl Invocation {
+    fn no_name_error(self) -> CliError {
+        match self {
+            Invocation::Draw => {
+                CliError::usage("`busy draw` needs a name or --file; see `busy draw --help`")
+            }
+            Invocation::TemplateRun => CliError::usage(
+                "`busy template run` needs a template name; see `busy template list`",
+            ),
+        }
+    }
+}
+
 /// Resolve a name to a source.
 ///
 /// 1. `shared/…` is the spec's reserved namespace for device built-ins.
@@ -32,10 +59,11 @@ pub enum Resolved {
 /// 3. anything else is an asset in this application's directory. A message
 ///    here cannot be meant for an image, so it is the typo guard: report the
 ///    near-match instead of sending a doomed asset draw.
-pub fn resolve(args: &DrawArgs, root: &Path) -> Result<Resolved, CliError> {
-    let name = args.common.name.as_deref().ok_or_else(|| {
-        CliError::usage("`busy draw` needs a name or --file; see `busy draw --help`")
-    })?;
+pub fn resolve(args: &DrawArgs, root: &Path, invocation: Invocation) -> Result<Resolved, CliError> {
+    let name = args
+        .name
+        .as_deref()
+        .ok_or_else(|| invocation.no_name_error())?;
 
     let forced_stock = matches!(args.as_kind, Some(AsArg::Stock));
     let forced_image = matches!(args.as_kind, Some(AsArg::Image));
@@ -90,7 +118,8 @@ pub fn resolve(args: &DrawArgs, root: &Path) -> Result<Resolved, CliError> {
 /// Shared by `Command::Draw` and `TemplateCmd::Run` — `run` is `draw` with
 /// the name always read as a template (`args.as_kind` forced to
 /// `AsArg::Template` by the caller) — so the two never diverge and a config
-/// warning is never printed twice.
+/// warning is never printed twice. `invocation` only affects error phrasing
+/// (see `Invocation`'s doc comment); it changes nothing about resolution.
 pub async fn run(
     args: &DrawArgs,
     settings: &Settings,
@@ -98,11 +127,12 @@ pub async fn run(
     emitter: &Emitter,
     dry_run: bool,
     root: &Path,
+    invocation: Invocation,
 ) -> Result<(), CliError> {
     let (payload, kind, template_context): (_, _, Option<(std::path::PathBuf, String)>) =
         match &args.file {
             Some(path) => (load_file(path)?, Kind::File, None),
-            None => match resolve(args, root)? {
+            None => match resolve(args, root, invocation)? {
                 Resolved::Template(template) => {
                     // `-` means stdin, exactly as it does for `busy text -`:
                     // command-surface spec §2.3 requires it here too, since

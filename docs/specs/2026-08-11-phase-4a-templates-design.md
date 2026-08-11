@@ -326,10 +326,22 @@ busy draw <name> [message] [--var k=v]...
 `template run` is the canonical, discoverable spelling; `busy draw <name>` is the short verb.
 They resolve to one implementation (command-surface spec §3.5).
 
-**Concretely, one implementation means `template run` flattens `DrawArgs`** rather than
+**Concretely, one implementation means `DrawArgs` and `TemplateRunArgs` compose a shared
+`DrawCommon`** (`opacity`, `--var`, `message`, placement, delivery) rather than each
 declaring a parallel set of placement and delivery options. Two structs that must stay in
-step would drift on the first flag added to either. The only difference is that `run`'s name
-positional is always resolved as a template, so `--as` is not offered there.
+step would drift on the first flag added to either — this is what keeps them from drifting,
+without offering `run` a `--file` or `--as` it does not need (§4 explains why neither applies
+to a template). `name` is declared
+separately on each of `DrawArgs` and `TemplateRunArgs` rather than folded into `DrawCommon`
+too: it is the one field that means something different in each command (an asset name or a
+`shared/…` built-in on `draw`, a template name and nothing else on `run`), so sharing its
+declaration meant sharing its help text as well — `template run --help` advertised "Asset
+name, or a `shared/…` device built-in", which described `draw`'s behaviour on a command that
+rejects a `shared/…` name as an unusable template name. A duplicated field with genuinely
+divergent semantics is not the drift risk `DrawCommon` exists to prevent; a help string that
+contradicts the command's own behaviour is worse. The only behavioural difference between the
+two commands is that `run`'s name positional is always resolved as a template, so `--as` is
+not offered there.
 
 ### 5.1 Resolution, complete
 

@@ -528,6 +528,121 @@ fn run_rejects_file_and_as_as_unknown_flags() {
     }
 }
 
+// Fix round 3 (post-review): `template run --help` described the wrong
+// thing (`DrawCommon`'s shared `name` doc comment, "Asset name, or a
+// `shared/…` device built-in"), and a bare `busy template run` pointed the
+// user at `busy draw --help`, a command with a `--file` flag `run` does not
+// have.
+
+#[test]
+fn run_help_describes_a_template_name_not_an_asset_name() {
+    let output = busy()
+        .args(["template", "run", "--help"])
+        .output()
+        .expect("should run");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Template name"),
+        "run --help must describe its NAME as a template name, got {stdout}"
+    );
+    assert!(
+        !stdout.contains("shared/"),
+        "run --help must not advertise a `shared/…` stock path, which `run` rejects as an \
+         unusable template name, got {stdout}"
+    );
+}
+
+#[test]
+fn draw_help_still_describes_an_asset_name() {
+    // Regression guard for the fix above: `name`'s own help text must not
+    // have been blanked or swapped when it was pulled out of `DrawCommon`.
+    let output = busy()
+        .args(["draw", "--help"])
+        .output()
+        .expect("should run");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Asset name, or a `shared/…` device built-in"),
+        "got {stdout}"
+    );
+}
+
+#[test]
+fn run_with_no_name_names_itself_not_draw() {
+    let output = busy()
+        .args(["template", "run"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("busy template run"),
+        "must name the command the user actually typed, got {stderr}"
+    );
+    assert!(
+        !stderr.contains("--file"),
+        "must not point at a flag `run` does not have, got {stderr}"
+    );
+}
+
+#[test]
+fn draw_with_no_name_still_names_draw_and_file() {
+    // Regression guard: `draw`'s own "no name" message must be untouched by
+    // threading `Invocation` through `resolve`.
+    let output = busy().args(["draw"]).output().expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("busy draw"), "got {stderr}");
+    assert!(stderr.contains("--file"), "got {stderr}");
+}
+
+#[test]
+fn run_with_a_shared_prefixed_name_is_rejected_as_a_template_name_not_drawn_as_stock() {
+    // `run`'s name positional is always resolved as a template (`--as` is
+    // forced), so a `shared/…` name is not a stock icon here — it fails
+    // `Template::load`'s name validation (no `/` allowed) with a message
+    // that matches what `run --help` now promises, rather than silently
+    // drawing a stock icon the way `draw shared/…` would.
+    let output = busy()
+        .args([
+            "--dry-run",
+            "template",
+            "run",
+            "shared/error_front_8x8.image",
+        ])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not a usable template name"),
+        "got {stderr}"
+    );
+}
+
+#[test]
+fn validate_a_single_name_does_not_double_it() {
+    // I4-adjacent: the accumulating loop's `label` prefix is only useful
+    // when validating several templates at once; on a single name it just
+    // repeated a name the underlying error already names.
+    let dir = root("validate-single");
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["template", "validate", "nope"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("nope: no template"),
+        "a single-name validate must not double-name the template, got {stderr}"
+    );
+    assert!(stderr.contains("no template named `nope`"), "got {stderr}");
+}
+
 // I3/I6: `-` reads the message from stdin, and `--quiet` on a listing must
 // not suppress the listing (matching `asset list`).
 

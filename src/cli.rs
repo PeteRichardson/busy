@@ -68,20 +68,30 @@ pub struct TemplateValidateArgs {
     pub name: Option<String>,
 }
 
-/// Fields shared by `busy draw` and `busy template run`.
+/// Fields shared by `busy draw` and `busy template run` — everything except
+/// `name`.
 ///
-/// Split out so the two commands cannot drift: `DrawArgs` is this plus
-/// `--file` and `--as`, and `TemplateRunArgs` is this alone. `run`'s name
-/// positional is always resolved as a template — no `--file` (which would
-/// bypass templates entirely and draw a raw payload) and no `--as` (which
-/// would parse and then be silently overridden) make sense there, so neither
-/// is offered: there is exactly one definition of the fields that ARE shared,
-/// rather than two structs whose fields must be kept in step by hand.
+/// Split out so the two commands cannot drift: `DrawArgs` is this plus its
+/// own `name`, `--file`, and `--as`, and `TemplateRunArgs` is this plus its
+/// own `name`. `run`'s name positional is always resolved as a template — no
+/// `--file` (which would bypass templates entirely and draw a raw payload)
+/// and no `--as` (which would parse and then be silently overridden) make
+/// sense there, so neither is offered: there is exactly one definition of
+/// the fields that ARE shared, rather than two structs whose fields must be
+/// kept in step by hand.
+///
+/// `name` itself is declared separately on each of `DrawArgs` and
+/// `TemplateRunArgs`, not here, because it is the one field that genuinely
+/// means something different in each command: an asset name or a `shared/…`
+/// built-in on `draw`, a template name and nothing else on `run`. Sharing it
+/// anyway once meant `template run --help` advertised "Asset name, or a
+/// `shared/…` device built-in" — help text that described `draw`'s behaviour
+/// on a command that rejects a `shared/…` name as an unusable template name.
+/// A duplicated field with genuinely divergent semantics is not the drift
+/// risk this struct exists to prevent; a help string that contradicts the
+/// command's own behaviour is worse.
 #[derive(Args, Debug, Clone, Default)]
 pub struct DrawCommon {
-    /// Asset name, or a `shared/…` device built-in
-    pub name: Option<String>,
-
     /// Opacity, 0-100
     #[arg(short = 'o', long)]
     pub opacity: Option<u8>,
@@ -103,6 +113,9 @@ pub struct DrawCommon {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct DrawArgs {
+    /// Asset name, or a `shared/…` device built-in
+    pub name: Option<String>,
+
     #[command(flatten)]
     pub common: DrawCommon,
 
@@ -115,10 +128,13 @@ pub struct DrawArgs {
     pub as_kind: Option<AsArg>,
 }
 
-/// `busy template run`'s arguments: `DrawCommon` alone, with no `--file` and
-/// no `--as` — see `DrawCommon`'s doc comment.
+/// `busy template run`'s arguments: its own `name`, plus `DrawCommon`, with
+/// no `--file` and no `--as` — see `DrawCommon`'s doc comment.
 #[derive(Args, Debug, Clone, Default)]
 pub struct TemplateRunArgs {
+    /// Template name
+    pub name: Option<String>,
+
     #[command(flatten)]
     pub common: DrawCommon,
 }
