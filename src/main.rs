@@ -107,9 +107,15 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
                     // `run` is `draw` with the name always read as a
                     // template, so the resolver never falls through to the
                     // asset/typo-guard branch even if a same-named asset
-                    // exists.
-                    let mut args = args.clone();
-                    args.as_kind = Some(cli::AsArg::Template);
+                    // exists. `TemplateRunArgs` carries none of `DrawArgs`'
+                    // `file`/`as_kind` fields (see `cli::DrawCommon`'s doc
+                    // comment), so building a `DrawArgs` here is the only
+                    // place either is set for a `run` invocation.
+                    let args = cli::DrawArgs {
+                        common: args.common.clone(),
+                        file: None,
+                        as_kind: Some(cli::AsArg::Template),
+                    };
                     cmd::draw::run(&args, &settings, &file, emitter, cli.global.dry_run, &root)
                         .await
                 }

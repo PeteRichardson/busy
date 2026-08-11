@@ -112,6 +112,25 @@ fn var_is_rejected_on_a_non_template_draw() {
 }
 
 #[test]
+fn a_message_on_a_stock_draw_is_rejected() {
+    // I1: rule 1 (`shared/…`) used to return before the rule-3 typo guard
+    // ran, so a second positional on a stock draw was silently dropped
+    // instead of erroring the way the same positional does on an asset draw.
+    let output = busy()
+        .args([
+            "--dry-run",
+            "draw",
+            "shared/error_front_8x8.image",
+            "this text is ignored",
+        ])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("images take no message"), "got {stderr}");
+}
+
+#[test]
 fn a_second_positional_on_an_image_draw_names_the_near_match() {
     let dir = root("typo");
     std::fs::create_dir_all(dir.join("error")).expect("temp dir");

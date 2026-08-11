@@ -59,6 +59,9 @@ pub fn list(root: &std::path::Path, emitter: &Emitter) -> Result<(), CliError> {
         .collect();
     let json_summary = format!("{} template(s)", entries.len());
 
+    // `respect_quiet: false`, matching `asset list`: a listing's output is
+    // the answer to the question the user asked, not commentary about the
+    // run, so `--quiet` (help text "Suppress warnings") must not silence it.
     if entries.is_empty() {
         return emitter.success_items(
             &format!(
@@ -68,7 +71,7 @@ pub fn list(root: &std::path::Path, emitter: &Emitter) -> Result<(), CliError> {
             &json_summary,
             "templates",
             templates,
-            true,
+            false,
         );
     }
 
@@ -77,7 +80,7 @@ pub fn list(root: &std::path::Path, emitter: &Emitter) -> Result<(), CliError> {
         report.push_str(&format!("{name}\t{description}\n"));
     }
     report.push_str(&format!("{} template(s)", entries.len()));
-    emitter.success_items(&report, &json_summary, "templates", templates, true)
+    emitter.success_items(&report, &json_summary, "templates", templates, false)
 }
 
 pub fn show(
@@ -111,17 +114,25 @@ pub fn show(
     // Structured fields under `--json` — `name`, `description`, `elements`
     // (a count), `variables` (an array), `path` — rather than the human
     // report's formatted lines folded into one string. The human text above
-    // is unchanged either way.
+    // is unchanged either way. `summary` carries the same one-line shape
+    // every other command's envelope has (`success`, `success_items`); it was
+    // missing here, which is what made this the third `--json` shape defect
+    // on the branch.
     emitter.success_fields(
         &report,
         serde_json::json!({
+            "summary": format!("{} element(s), {} variable(s)", file.elements.len(), variables.len()),
             "name": args.name,
             "description": file.description,
             "elements": file.elements.len(),
             "variables": variables,
             "path": template.dir.display().to_string(),
         }),
-        true,
+        // `respect_quiet: false` — see `list`'s identical comment above:
+        // `show` describes the one thing the caller asked to see, not
+        // commentary about the run, so it must match `asset list` rather
+        // than the `success`-derived default that used to apply here.
+        false,
     )
 }
 
@@ -142,13 +153,31 @@ pub fn validate(
 
     let mut failures = Vec::new();
     let mut sanitized_anything = false;
+    // Every step below used to propagate its error with `?`, which abandoned
+    // the loop at the first broken template and left every later one
+    // unchecked — the opposite of what a bulk `validate` is for. Each step
+    // now records its error onto `failures` and moves on to the next
+    // template, exactly like the offline-validation errors already did a few
+    // lines below.
     for name in &names {
-        let template = Template::load(root, name)?;
+        let template = match Template::load(root, name) {
+            Ok(template) => template,
+            Err(error) => {
+                failures.push(format!("{name}: {error}"));
+                continue;
+            }
+        };
 
         // Bind every referenced variable to a placeholder so the render can
         // proceed: validation is about the template's shape, not about whether
         // the caller happened to supply values.
-        let variables = template.required_variables()?;
+        let variables = match template.required_variables() {
+            Ok(variables) => variables,
+            Err(error) => {
+                failures.push(format!("{name}: {error}"));
+                continue;
+            }
+        };
         let mut vars = variables
             .into_iter()
             .map(|key| (key, "x".to_owned()))
@@ -163,8 +192,20 @@ pub fn validate(
             sanitized_anything = true;
         }
 
-        let file = template.render(&vars)?;
-        let payload = file.into_payload(&settings.app)?;
+        let file = match template.render(&vars) {
+            Ok(file) => file,
+            Err(error) => {
+                failures.push(format!("{name}: {error}"));
+                continue;
+            }
+        };
+        let payload = match file.into_payload(&settings.app) {
+            Ok(payload) => payload,
+            Err(error) => {
+                failures.push(format!("{name}: {error}"));
+                continue;
+            }
+        };
         let report = validate::offline(&payload, &template.dir);
 
         for warning in &report.warnings {
@@ -272,9 +313,15 @@ pub fn init(
         report.push_str("no examples are bundled with this build");
     }
 
+    // `summary` echoes the same prose as the human report — it is the one
+    // key every other command's `--json` envelope carries, so a wrapper
+    // script that logs `.summary` from every invocation gets it here too —
+    // while `written`/`skipped` stay the addressable arrays a script should
+    // actually branch on, per the comment above.
     emitter.success_fields(
         report.trim_end(),
         serde_json::json!({
+            "summary": report.trim_end(),
             "written": written,
             "skipped": skipped,
         }),

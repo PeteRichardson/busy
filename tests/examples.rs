@@ -84,6 +84,106 @@ fn init_force_overwrites() {
     assert!(!replaced.contains("# mine"), "--force must overwrite");
 }
 
+/// I7: `template validate` binds a synthetic placeholder for every referenced
+/// variable, so it cannot tell "this example needs a message" from "this
+/// example is broken" — deleting `| default('Done')` from the shipped `ok`
+/// template still passed `validate` while breaking `busy draw ok`, which is
+/// exactly the Definition-of-Done case (see the ledger's Task 10 entry). This
+/// runs every shipped example the way a user actually would: no arguments at
+/// all. Each one must either draw (it has no *required* variables, or they
+/// all have a minijinja `default`) or fail naming the missing variable — a
+/// missing-variable failure is a legitimate example that needs input, an
+/// unrelated failure is a broken example, and only this distinguishes them.
+#[test]
+fn every_shipped_example_draws_or_names_a_missing_variable_with_no_arguments() {
+    let dir = std::env::temp_dir().join("busy-examples-noargs");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["template", "init"])
+        .assert()
+        .success();
+
+    let mut any_drew_with_no_arguments = false;
+    let mut examples_checked = 0;
+    for entry in std::fs::read_dir(&dir).expect("read dir").flatten() {
+        if !entry.path().join("template.toml").is_file() {
+            continue;
+        }
+        let name = entry.file_name().into_string().expect("utf8 template name");
+        examples_checked += 1;
+
+        let output = busy()
+            .args(["--template-dir"])
+            .arg(&dir)
+            .args(["--dry-run", "draw", &name])
+            .output()
+            .expect("should run");
+
+        match output.status.code() {
+            Some(0) => any_drew_with_no_arguments = true,
+            Some(2) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(
+                    stderr.contains("requires variable"),
+                    "`{name}` failed with no arguments for a reason other than a missing \
+                     required variable, got {stderr}"
+                );
+            }
+            other => panic!(
+                "`{name}` with no arguments exited {other:?}, expected 0 (drew) or 2 \
+                 (missing variable); stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        }
+    }
+
+    assert!(
+        examples_checked > 0,
+        "the init'd directory had no examples to check"
+    );
+    assert!(
+        any_drew_with_no_arguments,
+        "at least one shipped example must draw with no arguments at all — this is the \
+         Definition-of-Done case (`busy draw ok`) that a placeholder-binding `validate` cannot see"
+    );
+}
+
+/// The cheaper, more specific pin for the exact regression that happened: the
+/// shipped `ok` example must draw with no arguments, and the rendered text
+/// must be the `default('Done')` fallback, not an error.
+#[test]
+fn the_shipped_ok_example_draws_with_no_arguments_and_says_done() {
+    let dir = std::env::temp_dir().join("busy-examples-ok-done");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["template", "init"])
+        .assert()
+        .success();
+
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["--dry-run", "draw", "ok"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "`busy draw ok` with no arguments must succeed: stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains(r#""text": "Done""#),
+        "got {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
 #[test]
 fn every_example_declares_a_description() {
     // `template list` prints it; an example without one is a documentation

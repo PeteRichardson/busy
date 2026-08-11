@@ -33,7 +33,7 @@ pub enum Resolved {
 ///    here cannot be meant for an image, so it is the typo guard: report the
 ///    near-match instead of sending a doomed asset draw.
 pub fn resolve(args: &DrawArgs, root: &Path) -> Result<Resolved, CliError> {
-    let name = args.name.as_deref().ok_or_else(|| {
+    let name = args.common.name.as_deref().ok_or_else(|| {
         CliError::usage("`busy draw` needs a name or --file; see `busy draw --help`")
     })?;
 
@@ -41,7 +41,35 @@ pub fn resolve(args: &DrawArgs, root: &Path) -> Result<Resolved, CliError> {
     let forced_image = matches!(args.as_kind, Some(AsArg::Image));
     let forced_template = matches!(args.as_kind, Some(AsArg::Template));
 
-    if forced_stock || (args.as_kind.is_none() && name.starts_with("shared/")) {
+    // Rule 1: `shared/…` (or `--as stock`) dominates rule 2, so it is decided
+    // first — but not returned yet, so the message guard below runs for it
+    // too instead of only for the asset fallback.
+    let is_stock = forced_stock || (args.as_kind.is_none() && name.starts_with("shared/"));
+    let is_template = !is_stock
+        && (forced_template || (!forced_image && root.join(name).join("template.toml").is_file()));
+
+    if is_template {
+        let template = Template::load(root, name)?;
+        return Ok(Resolved::Template(Box::new(template)));
+    }
+
+    // Neither rule 1 (stock) nor rule 3 (asset) — the two non-template
+    // resolutions — takes a message: an image has nothing to substitute it
+    // into. Checked once, here, before either branch returns, rather than
+    // only ahead of the asset fallback: a `shared/…` stock draw used to skip
+    // this guard entirely and silently drop a second positional.
+    if args.common.message.is_some() {
+        let candidates = template::discover::list(root);
+        let hint = match template::discover::suggest(name, &candidates) {
+            Some(near) if near != name => format!(" Did you mean `{near}`?"),
+            _ => String::new(),
+        };
+        return Err(CliError::usage(format!(
+            "`{name}` resolved to an image, and images take no message.{hint}"
+        )));
+    }
+
+    if is_stock {
         let stock = StockPath::new(name).map_err(|error| {
             CliError::usage(format!(
                 "`{name}` is not a valid stock path: {error}. Device built-ins look like \
@@ -49,22 +77,6 @@ pub fn resolve(args: &DrawArgs, root: &Path) -> Result<Resolved, CliError> {
             ))
         })?;
         return Ok(Resolved::Stock(stock));
-    }
-
-    if forced_template || (!forced_image && root.join(name).join("template.toml").is_file()) {
-        let template = Template::load(root, name)?;
-        return Ok(Resolved::Template(Box::new(template)));
-    }
-
-    if args.message.is_some() {
-        let candidates = template::discover::list(root);
-        let hint = match template::discover::suggest(name, &candidates) {
-            Some(near) => format!(" Did you mean `{near}`?"),
-            None => String::new(),
-        };
-        return Err(CliError::usage(format!(
-            "`{name}` resolved to an image, and images take no message.{hint}"
-        )));
     }
 
     let asset = AssetPath::new(name)
@@ -92,8 +104,19 @@ pub async fn run(
             Some(path) => (load_file(path)?, Kind::File, None),
             None => match resolve(args, root)? {
                 Resolved::Template(template) => {
+                    // `-` means stdin, exactly as it does for `busy text -`:
+                    // command-surface spec §2.3 requires it here too, since
+                    // `message` routinely arrives from `git log -1
+                    // --format=%s`. `read_message` is a no-op for any other
+                    // value, so this is safe to run unconditionally.
+                    let message = args
+                        .common
+                        .message
+                        .as_deref()
+                        .map(crate::input::read_message)
+                        .transpose()?;
                     let (vars, changed) =
-                        template::bind_variables(args.message.as_deref(), &args.vars)?;
+                        template::bind_variables(message.as_deref(), &args.common.vars)?;
                     if changed {
                         emitter.warn(SANITIZED_VARIABLE_WARNING);
                     }
@@ -153,7 +176,7 @@ pub async fn run(
         crate::cmd::template::check_assets_present(&device, &payload, dir, name).await?;
     }
 
-    if !args.delivery.keep {
+    if !args.common.delivery.keep {
         device.clear().await?;
     }
     device.draw(&payload).await?;
@@ -191,13 +214,14 @@ fn build_payload(
     }
     .map_err(|error| CliError::usage(error.to_string()))?;
 
-    if let Some(percent) = args.opacity {
+    if let Some(percent) = args.common.opacity {
         let opacity = Opacity::new(percent)
             .map_err(|error| CliError::usage(format!("invalid --opacity: {error}")))?;
         element = element.opacity(opacity);
     }
 
     let screen = args
+        .common
         .placement
         .screen
         .map(config::screen_from_arg)
@@ -205,6 +229,7 @@ fn build_payload(
     let (default_x, default_y) = config::Defaults::position(screen);
 
     let id = args
+        .common
         .delivery
         .id
         .clone()
@@ -215,17 +240,17 @@ fn build_payload(
     let mut builder = DisplayElement::builder(id)
         .map_err(|error| CliError::usage(error.to_string()))?
         .at(
-            args.placement.x.unwrap_or(default_x),
-            args.placement.y.unwrap_or(default_y),
+            args.common.placement.x.unwrap_or(default_x),
+            args.common.placement.y.unwrap_or(default_y),
         )
         .screen(screen)
-        .align(config::resolve_align(args.placement.align, file)?);
+        .align(config::resolve_align(args.common.placement.align, file)?);
 
-    if let Some(seconds) = args.delivery.timeout {
+    if let Some(seconds) = args.common.delivery.timeout {
         builder = builder.timeout_secs(seconds);
     }
 
-    let priority_value = match &args.delivery.priority {
+    let priority_value = match &args.common.delivery.priority {
         Some(input) => config::parse_priority(input)?,
         None => settings.priority,
     };
@@ -240,7 +265,7 @@ fn build_payload(
         .priority(priority)
         .element(builder.image(element));
 
-    if let Some(input) = &args.delivery.led {
+    if let Some(input) = &args.common.delivery.led {
         payload = payload.led_notification_color(crate::color::parse(input)?);
     }
 

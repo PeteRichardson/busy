@@ -108,15 +108,17 @@ impl Emitter {
     /// `"templates"`, …) and build its own item objects; `Emitter` no longer
     /// knows what a listing's rows mean.
     ///
-    /// `respect_quiet` mirrors `success`'s own flag, exposed here because the
-    /// two current callers disagree: `asset list`'s data *is* the answer to
-    /// the question asked, not commentary about the run, so `--quiet`
-    /// (help text "Suppress warnings") must not silence it — `false`.
-    /// `template list` predates this generalization with the opposite,
-    /// `success`-derived behaviour and keeps it unchanged here rather than
-    /// silently picking up a new quiet-suppression contract as a side effect
-    /// of this refactor — `true`. `--json` is unaffected either way, since
-    /// `--quiet` never suppresses JSON output.
+    /// `respect_quiet` mirrors `success`'s own flag, exposed here because a
+    /// listing's data *is* the answer to the question the user asked, not
+    /// commentary about the run, so `--quiet` (help text "Suppress
+    /// warnings") must not silence it. `asset list`, `template list`, and
+    /// `template show` (via `success_fields`, below) all pass `false` for
+    /// exactly this reason. `template list`/`show` briefly disagreed with
+    /// `asset list` here — inherited from `success`'s hard-coded `true`
+    /// before this parameter existed — which was itself the defect (a
+    /// listing silenced by a flag whose own help text says "suppress
+    /// warnings"). `--json` is unaffected either way, since `--quiet` never
+    /// suppresses JSON output.
     pub fn success_items(
         &self,
         human: &str,

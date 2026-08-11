@@ -46,7 +46,7 @@ pub enum TemplateCmd {
     /// Check templates without contacting the device
     Validate(TemplateValidateArgs),
     /// Render a template and draw it
-    Run(Box<DrawArgs>),
+    Run(Box<TemplateRunArgs>),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -68,18 +68,19 @@ pub struct TemplateValidateArgs {
     pub name: Option<String>,
 }
 
+/// Fields shared by `busy draw` and `busy template run`.
+///
+/// Split out so the two commands cannot drift: `DrawArgs` is this plus
+/// `--file` and `--as`, and `TemplateRunArgs` is this alone. `run`'s name
+/// positional is always resolved as a template — no `--file` (which would
+/// bypass templates entirely and draw a raw payload) and no `--as` (which
+/// would parse and then be silently overridden) make sense there, so neither
+/// is offered: there is exactly one definition of the fields that ARE shared,
+/// rather than two structs whose fields must be kept in step by hand.
 #[derive(Args, Debug, Clone, Default)]
-pub struct DrawArgs {
+pub struct DrawCommon {
     /// Asset name, or a `shared/…` device built-in
     pub name: Option<String>,
-
-    /// Draw a raw DisplayElements payload from a file instead of a named thing
-    #[arg(long, conflicts_with = "name")]
-    pub file: Option<PathBuf>,
-
-    /// Force how the name is interpreted, for pathological cases
-    #[arg(long = "as", value_enum)]
-    pub as_kind: Option<AsArg>,
 
     /// Opacity, 0-100
     #[arg(short = 'o', long)]
@@ -89,7 +90,8 @@ pub struct DrawArgs {
     #[arg(long = "var", value_name = "KEY=VALUE")]
     pub vars: Vec<String>,
 
-    /// Optional message; binds to the `message` template variable
+    /// Optional message; binds to the `message` template variable. Use `-` to
+    /// read it from stdin.
     pub message: Option<String>,
 
     #[command(flatten)]
@@ -97,6 +99,28 @@ pub struct DrawArgs {
 
     #[command(flatten)]
     pub delivery: DeliveryArgs,
+}
+
+#[derive(Args, Debug, Clone, Default)]
+pub struct DrawArgs {
+    #[command(flatten)]
+    pub common: DrawCommon,
+
+    /// Draw a raw DisplayElements payload from a file instead of a named thing
+    #[arg(long, conflicts_with = "name")]
+    pub file: Option<PathBuf>,
+
+    /// Force how the name is interpreted, for pathological cases
+    #[arg(long = "as", value_enum)]
+    pub as_kind: Option<AsArg>,
+}
+
+/// `busy template run`'s arguments: `DrawCommon` alone, with no `--file` and
+/// no `--as` — see `DrawCommon`'s doc comment.
+#[derive(Args, Debug, Clone, Default)]
+pub struct TemplateRunArgs {
+    #[command(flatten)]
+    pub common: DrawCommon,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]

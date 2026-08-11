@@ -51,13 +51,13 @@ pub fn apply(
     }
 
     let per_element: [(&str, bool); 7] = [
-        ("-x/--x", args.placement.x.is_some()),
-        ("-y/--y", args.placement.y.is_some()),
-        ("--align", args.placement.align.is_some()),
-        ("--screen", args.placement.screen.is_some()),
-        ("--timeout", args.delivery.timeout.is_some()),
-        ("--opacity", args.opacity.is_some()),
-        ("--id", args.delivery.id.is_some()),
+        ("-x/--x", args.common.placement.x.is_some()),
+        ("-y/--y", args.common.placement.y.is_some()),
+        ("--align", args.common.placement.align.is_some()),
+        ("--screen", args.common.placement.screen.is_some()),
+        ("--timeout", args.common.delivery.timeout.is_some()),
+        ("--opacity", args.common.opacity.is_some()),
+        ("--id", args.common.delivery.id.is_some()),
     ];
 
     for (flag, given) in per_element {
@@ -66,14 +66,14 @@ pub fn apply(
         }
     }
 
-    if let Some(input) = &args.delivery.priority {
+    if let Some(input) = &args.common.delivery.priority {
         let value = crate::config::parse_priority(input)?;
         let priority = Priority::new(value)
             .map_err(|error| CliError::usage(format!("invalid --priority: {error}")))?;
         payload.priority = Some(priority);
     }
 
-    if let Some(input) = &args.delivery.led {
+    if let Some(input) = &args.common.delivery.led {
         payload.led_notification_color = Some(crate::color::parse(input)?);
     }
 
@@ -82,7 +82,7 @@ pub fn apply(
 
 /// `--var` only means something for a template.
 pub fn reject_vars_unless_template(args: &DrawArgs, kind: Kind) -> Result<(), CliError> {
-    if !args.vars.is_empty() && kind != Kind::Template {
+    if !args.common.vars.is_empty() && kind != Kind::Template {
         return Err(CliError::usage(format!(
             "--var cannot be used with {}: variables are substituted into a template, \
              and this is not one.",
