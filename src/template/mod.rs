@@ -24,10 +24,9 @@ use crate::error::CliError;
 ///
 /// `elements` is `Vec<DisplayElement>` — busylib's own type — so `animation`,
 /// `rectangle`, and `countdown` still come along free.
-// Not yet constructed outside tests — `Template::render` produces one, but
-// `Template` itself has no production caller until Task 5 wires `busy
-// template ...` commands. `cfg_attr(not(test), ...)` keeps the expectation
-// accurate under both `cargo test` and `cargo clippy --all-targets`.
+// `description` is read only by tests (`file.description`); production code
+// (`into_payload`) never reads it back — the field exists to round-trip
+// through `template show`, which Task 5 wires up.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "wired up by later tasks in this phase")
@@ -69,10 +68,8 @@ impl TemplateFile {
 }
 
 /// A template on disk, loaded but not yet rendered.
-// Not yet constructed outside tests — the commands that consume it land in
-// Task 5 of this phase. `cfg_attr(not(test), ...)` keeps the expectation
-// accurate under both `cargo test` and `cargo clippy --all-targets`; once
-// real callers exist, drop this and let dead-code analysis run normally.
+// `dir` is read only by tests; no production code reads it back yet (Task 4
+// needs it to resolve a template's relative asset paths).
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "wired up by later tasks in this phase")

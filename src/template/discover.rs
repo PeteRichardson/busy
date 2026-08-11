@@ -14,14 +14,16 @@ use crate::error::CliError;
 /// `None` means the platform gave us no config directory at all. A root that
 /// simply does not exist yet is `Some` — `list` reports it as empty and
 /// `template init` creates it.
-// Not yet called outside tests — the commands that consume the template root
-// land in later tasks of this phase. `cfg_attr(not(test), ...)` keeps the
-// expectation accurate under both `cargo test` and `cargo clippy
-// --all-targets`; once real callers exist, drop this and let dead-code
-// analysis run normally.
+// Not yet called outside tests — Task 5 (`cmd::template::root`) wires this
+// up. `cfg_attr(not(test), ...)` keeps the expectation accurate under both
+// `cargo test` and `cargo clippy --all-targets`; once that caller exists,
+// drop this and let dead-code analysis run normally.
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "wired up by later tasks in this phase")
+    expect(
+        dead_code,
+        reason = "wired up by Task 5 of this phase (cmd::template::root)"
+    )
 )]
 pub fn root(flag: Option<&Path>) -> Option<PathBuf> {
     if let Some(path) = flag {
@@ -36,16 +38,6 @@ pub fn root(flag: Option<&Path>) -> Option<PathBuf> {
 ///
 /// The name is joined onto the root, so `..` or a separator would let a
 /// template name reach outside it. Same charset as `AssetName`.
-// `Template::load` calls this, but `Template::load` itself has no production
-// caller until Task 5 wires `busy template ...` commands — so this remains
-// unreachable from `main` under a non-test build. Reachability, for the
-// dead-code pass, does not propagate through a callee whose only caller is
-// itself dead; verified by removing this attribute and building, which
-// produced the warning back.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired up by later tasks in this phase")
-)]
 pub fn validate_name(name: &str) -> Result<(), CliError> {
     let ok = !name.is_empty()
         && name != "."
@@ -64,10 +56,6 @@ pub fn validate_name(name: &str) -> Result<(), CliError> {
 
 /// Every template name under `root`, sorted. Never fails: an unreadable root
 /// is indistinguishable from an empty one for this purpose.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired up by later tasks in this phase")
-)]
 pub fn list(root: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
@@ -84,10 +72,6 @@ pub fn list(root: &Path) -> Vec<String> {
 
 /// The closest candidate to `name`, when one is close enough to be worth
 /// suggesting. Powers did-you-mean on a misresolved draw.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired up by later tasks in this phase")
-)]
 pub fn suggest(name: &str, candidates: &[String]) -> Option<String> {
     let threshold = (name.len() / 3 + 1).min(2);
     candidates
@@ -100,10 +84,6 @@ pub fn suggest(name: &str, candidates: &[String]) -> Option<String> {
 
 /// Levenshtein distance, two-row variant. A `strsim` dependency for one call
 /// site is not worth the tree.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired up by later tasks in this phase")
-)]
 fn distance(a: &str, b: &str) -> usize {
     let b_chars: Vec<char> = b.chars().collect();
     let mut previous: Vec<usize> = (0..=b_chars.len()).collect();
