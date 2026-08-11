@@ -114,7 +114,8 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
                              payload. Edit the file's `id` fields instead.",
                         ));
                     }
-                    cmd::draw::load_file(path)?
+                    let loaded = cmd::draw::load_file(path)?;
+                    cmd::draw::apply_file_overrides(loaded, args)?
                 }
                 None => {
                     let resolved = cmd::draw::resolve(args)?;

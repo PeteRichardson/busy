@@ -72,6 +72,80 @@ async fn keep_skips_the_clear() {
     assert_eq!(received[0].method, http::Method::POST);
 }
 
+#[tokio::test]
+async fn a_plain_draw_of_an_asset_clears_first() {
+    // `a_plain_draw_clears_first` above only exercises `busy text`; nothing
+    // pinned the same DELETE-then-POST ordering for `busy draw`. If it ever
+    // inverted, `busy draw` would wipe the element it had just drawn and
+    // still exit 0.
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/display/draw"))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/display/draw"))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let output = busy_at(&server)
+        .args(["draw", "logo.png"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // MockServer verifies the .expect() counts when it drops.
+
+    let received = server
+        .received_requests()
+        .await
+        .expect("request recording is enabled by default");
+    assert_eq!(received.len(), 2);
+    assert_eq!(received[0].method, http::Method::DELETE);
+    assert_eq!(received[1].method, http::Method::POST);
+}
+
+#[tokio::test]
+async fn keep_skips_the_clear_for_draw() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/display/draw"))
+        .respond_with(ok())
+        .expect(0)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/display/draw"))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let output = busy_at(&server)
+        .args(["draw", "--keep", "logo.png"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let received = server
+        .received_requests()
+        .await
+        .expect("request recording is enabled by default");
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0].method, http::Method::POST);
+}
+
 #[test]
 fn the_default_element_id_is_message() {
     let output = busy()

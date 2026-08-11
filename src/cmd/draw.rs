@@ -137,3 +137,62 @@ pub fn load_file(path: &std::path::Path) -> Result<DisplayElements, CliError> {
         ))
     })
 }
+
+/// Apply the `--file` delivery overrides that are well-defined against an
+/// already-loaded payload.
+///
+/// CLI flags conventionally override the contents of a file a tool reads, so
+/// a flag that *can* be honoured unambiguously is. `--priority` and `--led`
+/// are payload-level fields on `DisplayElements` — there is exactly one of
+/// each per payload — so overriding is unambiguous. A flag that is absent
+/// leaves the file's own value untouched; substituting a default here would
+/// silently overwrite a value the file never asked to have replaced.
+///
+/// `--opacity`, `-x`/`-y`/`--align`, `--screen`, and `--timeout` are
+/// per-element fields, but a payload file may hold several elements with no
+/// principled way to pick which one a single flag applies to, so those are
+/// rejected outright rather than silently ignored or applied to an arbitrary
+/// element. (`--id` and `--until` are rejected earlier, in `main.rs`.)
+pub fn apply_file_overrides(
+    mut payload: DisplayElements,
+    args: &DrawArgs,
+) -> Result<DisplayElements, CliError> {
+    if args.opacity.is_some() {
+        return Err(file_override_rejected("--opacity"));
+    }
+    if args.placement.x.is_some() {
+        return Err(file_override_rejected("-x/--x"));
+    }
+    if args.placement.y.is_some() {
+        return Err(file_override_rejected("-y/--y"));
+    }
+    if args.placement.align.is_some() {
+        return Err(file_override_rejected("--align"));
+    }
+    if args.placement.screen.is_some() {
+        return Err(file_override_rejected("--screen"));
+    }
+    if args.delivery.timeout.is_some() {
+        return Err(file_override_rejected("--timeout"));
+    }
+
+    if let Some(input) = &args.delivery.priority {
+        let priority_value = config::parse_priority(input)?;
+        let priority = crate::device::Priority::new(priority_value)
+            .map_err(|error| CliError::usage(format!("invalid --priority: {error}")))?;
+        payload.priority = Some(priority);
+    }
+
+    if let Some(input) = &args.delivery.led {
+        payload.led_notification_color = Some(crate::color::parse(input)?);
+    }
+
+    Ok(payload)
+}
+
+fn file_override_rejected(flag: &str) -> CliError {
+    CliError::usage(format!(
+        "{flag} cannot be used with --file: it applies to a single element, but a payload \
+         file may hold several. Edit the file's own fields instead."
+    ))
+}

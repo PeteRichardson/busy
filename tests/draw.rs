@@ -2,6 +2,29 @@ mod common;
 
 use common::busy;
 
+/// Write a minimal raw payload file, optionally carrying its own `priority`,
+/// and return its path. Used by the `--file` override tests below.
+fn write_payload_file(name: &str, priority: Option<u8>) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(name);
+    let priority_field = priority
+        .map(|value| format!(r#""priority": {value},"#))
+        .unwrap_or_default();
+    std::fs::write(
+        &path,
+        format!(
+            r#"{{
+                "application_name": "busy",
+                {priority_field}
+                "elements": [
+                    {{"id": "a", "type": "text", "text": "x", "font": "small"}}
+                ]
+            }}"#
+        ),
+    )
+    .expect("write payload");
+    path
+}
+
 fn stdout(args: &[&str]) -> String {
     let output = busy().args(args).output().expect("should run");
     assert!(
@@ -189,5 +212,167 @@ fn id_is_an_error_with_file_because_ids_come_from_the_payload() {
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("--id"), "got {stderr}");
+    assert!(stderr.contains("--file"), "got {stderr}");
+}
+
+#[test]
+fn priority_overrides_the_files_own_priority_on_the_file_path() {
+    // `--priority` is a payload-level field (there is exactly one per
+    // payload), so it is well-defined to override, unlike a per-element flag.
+    let path = write_payload_file("busy-test-priority-override.json", Some(95));
+
+    let output = busy()
+        .args(["--dry-run", "draw", "--file"])
+        .arg(&path)
+        .args(["--priority", "50"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"priority\": 50"), "got {stdout}");
+}
+
+#[test]
+fn led_overrides_the_files_led_on_the_file_path() {
+    let path = write_payload_file("busy-test-led-override.json", None);
+
+    let output = busy()
+        .args(["--dry-run", "draw", "--file"])
+        .arg(&path)
+        .args(["--led", "red"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"led_notification_color\": \"#FF0000FF\""),
+        "got {stdout}"
+    );
+}
+
+#[test]
+fn an_absent_priority_flag_leaves_the_files_own_priority_untouched() {
+    // The bug most likely to slip through: a default silently overwriting a
+    // value the file never asked to have replaced. No --priority flag is
+    // given here at all.
+    let path = write_payload_file("busy-test-priority-absent.json", Some(77));
+
+    let output = busy()
+        .args(["--dry-run", "draw", "--file"])
+        .arg(&path)
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"priority\": 77"), "got {stdout}");
+}
+
+#[test]
+fn opacity_is_rejected_with_file() {
+    // Per-element field; a payload file may hold several elements, so there
+    // is no principled target for a single --opacity flag.
+    let path = write_payload_file("busy-test-opacity-reject.json", None);
+
+    let output = busy()
+        .args(["--dry-run", "draw", "--file"])
+        .arg(&path)
+        .args(["--opacity", "50"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--opacity"), "got {stderr}");
+    assert!(stderr.contains("--file"), "got {stderr}");
+}
+
+#[test]
+fn x_is_rejected_with_file() {
+    let path = write_payload_file("busy-test-x-reject.json", None);
+
+    let output = busy()
+        .args(["--dry-run", "draw", "--file"])
+        .arg(&path)
+        .args(["--x", "10"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--x"), "got {stderr}");
+    assert!(stderr.contains("--file"), "got {stderr}");
+}
+
+#[test]
+fn y_is_rejected_with_file() {
+    let path = write_payload_file("busy-test-y-reject.json", None);
+
+    let output = busy()
+        .args(["--dry-run", "draw", "--file"])
+        .arg(&path)
+        .args(["--y", "10"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--y"), "got {stderr}");
+    assert!(stderr.contains("--file"), "got {stderr}");
+}
+
+#[test]
+fn align_is_rejected_with_file() {
+    let path = write_payload_file("busy-test-align-reject.json", None);
+
+    let output = busy()
+        .args(["--dry-run", "draw", "--file"])
+        .arg(&path)
+        .args(["--align", "top_left"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--align"), "got {stderr}");
+    assert!(stderr.contains("--file"), "got {stderr}");
+}
+
+#[test]
+fn screen_is_rejected_with_file() {
+    let path = write_payload_file("busy-test-screen-reject.json", None);
+
+    let output = busy()
+        .args(["--dry-run", "draw", "--file"])
+        .arg(&path)
+        .args(["--screen", "back"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--screen"), "got {stderr}");
+    assert!(stderr.contains("--file"), "got {stderr}");
+}
+
+#[test]
+fn timeout_is_rejected_with_file() {
+    let path = write_payload_file("busy-test-timeout-reject.json", None);
+
+    let output = busy()
+        .args(["--dry-run", "draw", "--file"])
+        .arg(&path)
+        .args(["--timeout", "30"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--timeout"), "got {stderr}");
     assert!(stderr.contains("--file"), "got {stderr}");
 }
