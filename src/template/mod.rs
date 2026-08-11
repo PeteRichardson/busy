@@ -137,6 +137,18 @@ impl Template {
         if missing.is_empty() {
             return Ok(());
         }
+        // `required_variables` is static analysis over raw variable references;
+        // it cannot see that `{{ x | default(...) }}` makes `x` optional (the
+        // same over-report `template show` already warns about for a
+        // branch-only reference — see its doc comment). Rendering is proof:
+        // minijinja's own `default` filter resolves an absent value before
+        // strict-undefined ever fires, so if the template renders fine despite
+        // the gap, nothing on `missing` was actually required. This is what
+        // lets `busy draw ok` work with no arguments even though `message` is
+        // technically "referenced".
+        if self.render(supplied).is_ok() {
+            return Ok(());
+        }
         Err(missing_variables_error(&self.name, &missing))
     }
 
@@ -648,6 +660,33 @@ mod tests {
         template
             .check_required_variables(&vars)
             .expect("all required variables are supplied");
+    }
+
+    #[test]
+    fn a_variable_with_a_minijinja_default_is_not_required() {
+        // `required_variables` cannot see through `| default(...)` — it is
+        // static analysis over raw references, not evaluation — so it lists
+        // `message` here even though the shipped `ok` example relies on this
+        // exact pattern to work with no arguments at all. `render` succeeding
+        // despite the gap is what makes the flag-that-has-a-default distinct
+        // from a variable that is genuinely missing.
+        let dir = tempdir();
+        std::fs::create_dir_all(dir.join("greet")).unwrap();
+        std::fs::write(
+            dir.join("greet/template.toml"),
+            "description = \"{{ message | default('Done') }}\"\nelements = []\n",
+        )
+        .unwrap();
+
+        let template = Template::load(&dir, "greet").expect("should load");
+        assert_eq!(
+            template.required_variables().expect("should analyse"),
+            vec!["message".to_owned()],
+            "static analysis still over-reports message as referenced"
+        );
+        template
+            .check_required_variables(&std::collections::BTreeMap::new())
+            .expect("a default filter makes the gap harmless");
     }
 
     #[test]
