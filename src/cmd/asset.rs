@@ -178,11 +178,7 @@ pub async fn delete(
             )));
         }
         confirm_prompt(&mut std::io::stderr(), emitter, &summary);
-        let mut answer = String::new();
-        std::io::stdin()
-            .read_line(&mut answer)
-            .map_err(|error| CliError::runtime(format!("could not read confirmation: {error}")))?;
-        if !is_affirmative(&answer) {
+        if !read_confirmation(std::io::stdin().lock())? {
             return emitter.success("cancelled", None);
         }
     } else {
@@ -225,9 +221,26 @@ fn is_affirmative(answer: &str) -> bool {
     matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
+/// Read the y/N answer and classify a failure to read it as a runtime error,
+/// not a usage one: the terminal going away or the read otherwise failing is
+/// the environment's fault, not something the user typed wrong. Split out
+/// from `delete` for the same reason `confirm_prompt` is: the interactive
+/// branch it lives in only runs against a real terminal, which the
+/// process-spawning integration tests can never provide. Before #9, this
+/// exact failure fell through a blanket `impl From<String> for CliError`
+/// that turned every string error into `CliError::Usage` (exit 2); it now
+/// exits 1, and `a_failed_read_is_a_runtime_error_not_a_usage_error` pins it.
+fn read_confirmation(mut reader: impl std::io::BufRead) -> Result<bool, CliError> {
+    let mut answer = String::new();
+    reader
+        .read_line(&mut answer)
+        .map_err(|error| CliError::runtime(format!("could not read confirmation: {error}")))?;
+    Ok(is_affirmative(&answer))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{confirm_prompt, is_affirmative};
+    use super::{confirm_prompt, is_affirmative, read_confirmation};
 
     #[test]
     fn only_an_explicit_yes_confirms_a_delete() {
@@ -287,5 +300,37 @@ mod tests {
             "must not duplicate the manifest outside --json, got: {written:?}"
         );
         assert!(written.contains("Delete them?"));
+    }
+
+    /// A `BufRead` whose every read fails, standing in for a real stdin that
+    /// has gone away (closed terminal, broken pipe, and so on).
+    struct FailingReader;
+
+    impl std::io::Read for FailingReader {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("no such device"))
+        }
+    }
+
+    impl std::io::BufRead for FailingReader {
+        fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+            Err(std::io::Error::other("no such device"))
+        }
+        fn consume(&mut self, _amt: usize) {}
+    }
+
+    #[test]
+    fn a_failed_read_is_a_runtime_error_not_a_usage_error() {
+        // #9: `read_confirmation` used to inline `?` on a `Result<_, String>`,
+        // which the now-deleted blanket `impl From<String> for CliError`
+        // turned into `CliError::Usage` (exit 2) regardless of cause. A
+        // failed read is the environment's fault, not the user's, so this
+        // must be `Runtime` (exit 1) -- see the fixed stdin bug in `815d033`.
+        let error = read_confirmation(FailingReader).expect_err("should fail");
+        assert_eq!(
+            error.exit_code(),
+            1,
+            "a stdin read failure must exit 1, not 2; got {error:?}"
+        );
     }
 }

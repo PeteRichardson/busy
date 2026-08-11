@@ -5,6 +5,7 @@
 //! the validated type itself.
 
 use crate::device::Color;
+use crate::error::CliError;
 
 /// Named colours the CLI understands, as `#RRGGBB`.
 /// Used by the parse function.
@@ -22,7 +23,7 @@ const NAMES: &[(&str, u32)] = &[
 
 /// Parse a colour string into a validated Color.
 /// This function is used by the CLI command handlers and is tested separately.
-pub fn parse(input: &str) -> Result<Color, String> {
+pub fn parse(input: &str) -> Result<Color, CliError> {
     parse_with_context(input, "")
 }
 
@@ -31,11 +32,11 @@ pub fn parse(input: &str) -> Result<Color, String> {
 /// flag and `[defaults] color` share the same syntax — so a user with a typo
 /// in the file couldn't tell where to look. This makes the config-file path
 /// say so, matching how the font/align/screen errors already do.
-pub fn parse_in_config_file(input: &str) -> Result<Color, String> {
+pub fn parse_in_config_file(input: &str) -> Result<Color, CliError> {
     parse_with_context(input, " in the config file")
 }
 
-fn parse_with_context(input: &str, context: &str) -> Result<Color, String> {
+fn parse_with_context(input: &str, context: &str) -> Result<Color, CliError> {
     let trimmed = input.trim();
 
     let lower = trimmed.to_ascii_lowercase();
@@ -51,7 +52,7 @@ fn parse_with_context(input: &str, context: &str) -> Result<Color, String> {
         .unwrap_or(trimmed);
 
     if hex.is_empty() || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(invalid(input, context));
+        return Err(CliError::usage(invalid(input, context)));
     }
 
     let nibble = |index: usize| -> u8 {
@@ -65,7 +66,7 @@ fn parse_with_context(input: &str, context: &str) -> Result<Color, String> {
         3 => Ok(Color::rgb(nibble(0) * 17, nibble(1) * 17, nibble(2) * 17)),
         6 => Ok(Color::rgb(byte(0), byte(2), byte(4))),
         8 => Ok(Color::rgba(byte(0), byte(2), byte(4), byte(6))),
-        _ => Err(invalid(input, context)),
+        _ => Err(CliError::usage(invalid(input, context))),
     }
 }
 
@@ -121,7 +122,7 @@ mod tests {
     #[test]
     fn rejected_forms_explain_themselves() {
         for bad in ["", "#", "#FF", "#FFFFF", "nope", "#GGGGGG", "0x"] {
-            let error = parse(bad).expect_err("should be rejected");
+            let error = parse(bad).expect_err("should be rejected").to_string();
             assert!(
                 error.contains(bad) || bad.is_empty(),
                 "error for {bad:?} should quote the input, got {error:?}"
@@ -131,11 +132,15 @@ mod tests {
 
     #[test]
     fn config_file_errors_name_the_file() {
-        let error = parse_in_config_file("chartreuse").expect_err("should be rejected");
+        let error = parse_in_config_file("chartreuse")
+            .expect_err("should be rejected")
+            .to_string();
         assert!(error.contains("in the config file"), "got {error:?}");
 
         // The plain flag path must not gain the same wording.
-        let flag_error = parse("chartreuse").expect_err("should be rejected");
+        let flag_error = parse("chartreuse")
+            .expect_err("should be rejected")
+            .to_string();
         assert!(
             !flag_error.contains("in the config file"),
             "got {flag_error:?}"

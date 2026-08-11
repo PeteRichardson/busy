@@ -15,6 +15,7 @@ use serde::Deserialize;
 use crate::cli::{AlignArg, FontArg, GlobalArgs, PrefixArg, ScreenArg, StyleArgs};
 use crate::color;
 use crate::device::{Align, Color, Font, Screen};
+use crate::error::CliError;
 
 /// Built-in fallbacks. The single place a default value may be written.
 pub struct Defaults;
@@ -183,7 +184,7 @@ pub fn resolve(
     style: &StyleArgs,
     env: &Env,
     file: &FileConfig,
-) -> Result<Settings, String> {
+) -> Result<Settings, CliError> {
     let addr = global
         .addr
         .clone()
@@ -233,9 +234,9 @@ pub fn resolve(
     let priority = match &file.defaults.priority {
         Some(value) => {
             if !(1..=100).contains(value) {
-                return Err(format!(
+                return Err(CliError::usage(format!(
                     "invalid priority `{value}` in the config file: expected 1-100"
-                ));
+                )));
             }
             *value
         }
@@ -261,7 +262,7 @@ pub fn resolve(
 /// that with `Defaults::ALIGN` when neither the flag nor the config file
 /// supplies one. An invalid config-file value is a hard error, exactly like
 /// font, priority, and colour: a typo here must not be silently ignored.
-pub fn resolve_align(flag: Option<AlignArg>, file: &FileConfig) -> Result<Align, String> {
+pub fn resolve_align(flag: Option<AlignArg>, file: &FileConfig) -> Result<Align, CliError> {
     if let Some(align) = flag {
         return Ok(align_from_arg(align));
     }
@@ -271,7 +272,7 @@ pub fn resolve_align(flag: Option<AlignArg>, file: &FileConfig) -> Result<Align,
     }
 }
 
-pub fn parse_priority(input: &str) -> Result<u8, String> {
+pub fn parse_priority(input: &str) -> Result<u8, CliError> {
     match input.to_ascii_lowercase().as_str() {
         "low" => return Ok(10),
         "normal" => return Ok(50),
@@ -280,11 +281,13 @@ pub fn parse_priority(input: &str) -> Result<u8, String> {
         _ => {}
     }
 
-    let value: u8 = input.parse().map_err(|_| invalid_priority(input))?;
+    let value: u8 = input
+        .parse()
+        .map_err(|_| CliError::usage(invalid_priority(input)))?;
     if (1..=100).contains(&value) {
         Ok(value)
     } else {
-        Err(invalid_priority(input))
+        Err(CliError::usage(invalid_priority(input)))
     }
 }
 
@@ -300,12 +303,12 @@ fn invalid_priority(input: &str) -> String {
 ///
 /// This routes through the CLI's own `*Arg` enums because the `busylib` types
 /// do not implement `clap::ValueEnum` and are not ours to change.
-fn parse_enum<T: FromArgName>(value: &str, label: &str) -> Result<T, String> {
+fn parse_enum<T: FromArgName>(value: &str, label: &str) -> Result<T, CliError> {
     T::from_arg_name(value).ok_or_else(|| {
-        format!(
+        CliError::usage(format!(
             "invalid {label} `{value}` in the config file: expected one of {}",
             T::accepted().join(", ")
-        )
+        ))
     })
 }
 
@@ -538,7 +541,9 @@ mod tests {
             "#,
         )
         .unwrap();
-        let error = super::resolve_align(None, &file).expect_err("should reject");
+        let error = super::resolve_align(None, &file)
+            .expect_err("should reject")
+            .to_string();
         assert!(error.contains("centre"), "got {error:?}");
         assert!(error.contains("in the config file"), "got {error:?}");
     }
@@ -576,7 +581,8 @@ mod tests {
             &Env::default(),
             &file,
         )
-        .expect_err("should reject");
+        .expect_err("should reject")
+        .to_string();
         assert!(error.contains("chartreuse"), "got {error:?}");
         assert!(
             error.contains("in the config file"),

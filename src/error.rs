@@ -39,9 +39,3 @@ impl CliError {
         CliError::Runtime(message.into())
     }
 }
-
-impl From<String> for CliError {
-    fn from(message: String) -> Self {
-        CliError::Usage(message)
-    }
-}
