@@ -102,10 +102,23 @@ fn the_element_id_defaults_to_image() {
 }
 
 #[test]
+fn draw_help_does_not_advertise_until() {
+    // `draw` has its own delivery arg group that never included `--until`, so
+    // clap must never advertise a flag `draw` cannot accept (issue #12).
+    let output = busy()
+        .args(["draw", "--help"])
+        .output()
+        .expect("should run");
+    assert!(output.status.success());
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(!help.contains("--until"), "got {help}");
+}
+
+#[test]
 fn until_is_rejected_on_draw() {
-    // `--until` is accepted by clap (it's flattened in from `DeliveryArgs`,
-    // shared with `text`), but `draw` does not yet parse it — it must fail
-    // loudly rather than silently doing nothing.
+    // `--until` is not a field of `draw`'s delivery args at all, so clap
+    // itself rejects it as an unrecognized argument — no hand-written
+    // rejection needed.
     let output = busy()
         .args([
             "--dry-run",
@@ -119,7 +132,6 @@ fn until_is_rejected_on_draw() {
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("--until"), "got {stderr}");
-    assert!(stderr.contains("--timeout"), "got {stderr}");
 }
 
 #[test]

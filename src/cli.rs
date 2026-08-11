@@ -143,6 +143,16 @@ pub struct TextArgs {
 
     #[command(flatten)]
     pub delivery: DeliveryArgs,
+
+    // `--until` only makes sense once a payload's lifetime is being parsed
+    // (`text` owns that), so it lives directly on `TextArgs` rather than in
+    // `DeliveryArgs`: `draw` flattens `DeliveryArgs` too, and must not
+    // advertise a flag it does not accept (see issue #12). It is pinned to
+    // the same "Delivery" help section as the rest of `DeliveryArgs` so the
+    // split is invisible to `text --help`.
+    /// Hide the element at this time: RFC 3339, or Unix seconds
+    #[arg(short, long, conflicts_with = "timeout", help_heading = "Delivery")]
+    pub until: Option<String>,
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -202,13 +212,16 @@ pub struct DeliveryArgs {
     #[arg(short, long)]
     pub priority: Option<String>,
 
+    // The `--timeout`/`--until` conflict is declared only on `until` (in
+    // `TextArgs`), not here: `DeliveryArgs` is also flattened into `draw`,
+    // and clap's derive debug-asserts that every id named in
+    // `conflicts_with` exists in that same subcommand — `draw` has no
+    // `until` at all. clap's conflict checking is symmetric from a single
+    // declared side, so declaring it once on `until` still makes `text
+    // --timeout … --until …` an error either way round.
     /// Seconds the element stays on screen (0 = forever)
-    #[arg(short, long, conflicts_with = "until")]
-    pub timeout: Option<u32>,
-
-    /// Hide the element at this time: RFC 3339, or Unix seconds
     #[arg(short, long)]
-    pub until: Option<String>,
+    pub timeout: Option<u32>,
 
     /// Blink the status LED this colour
     #[arg(short, long)]

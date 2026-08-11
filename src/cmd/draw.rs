@@ -56,9 +56,10 @@ pub fn build_payload(
     file: &FileConfig,
     resolved: &Resolved,
 ) -> Result<DisplayElements, CliError> {
-    // `--until` is rejected in `main.rs` before this function is reached, so
-    // both the --file and the named-draw paths get the same gate from one
-    // place rather than two copies that could drift.
+    // `draw`'s delivery args have no `until` field at all (see `cli.rs`), so
+    // there is nothing to reject here: clap's own "unexpected argument"
+    // covers both the --file and the named-draw paths uniformly, before
+    // either one reaches this function.
     let mut element = match resolved {
         Resolved::Asset(path) => ImageElement::asset(path.clone()),
         Resolved::Stock(path) => ImageElement::stock(path.clone()),
@@ -152,7 +153,8 @@ pub fn load_file(path: &std::path::Path) -> Result<DisplayElements, CliError> {
 /// per-element fields, but a payload file may hold several elements with no
 /// principled way to pick which one a single flag applies to, so those are
 /// rejected outright rather than silently ignored or applied to an arbitrary
-/// element. (`--id` and `--until` are rejected earlier, in `main.rs`.)
+/// element. (`--id` is rejected earlier, in `main.rs`; `--until` has no
+/// field on `draw` at all, so clap rejects it before either function runs.)
 pub fn apply_file_overrides(
     mut payload: DisplayElements,
     args: &DrawArgs,

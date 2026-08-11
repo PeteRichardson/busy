@@ -89,18 +89,6 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
         Command::Draw(args) => {
             let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
 
-            // `text` owns the RFC 3339 parsing for `--until`; duplicating it
-            // here would be the kind of copy this project has been careful
-            // to avoid. This check sits before the --file branch so `--until`
-            // is rejected the same way on both the --file and the named-draw
-            // paths, rather than only on the one that happens to call
-            // `build_payload`.
-            if args.delivery.until.is_some() {
-                return Err(CliError::usage(
-                    "--until is not yet supported on `draw`; use --timeout instead",
-                ));
-            }
-
             let payload = match &args.file {
                 Some(path) => {
                     // A payload file names its own elements. Silently

@@ -110,7 +110,7 @@ fn lifetime(args: &TextArgs) -> Result<Option<Lifetime>, CliError> {
     if let Some(seconds) = args.delivery.timeout {
         return Ok(Some(Lifetime::timeout_secs(seconds)));
     }
-    match &args.delivery.until {
+    match &args.until {
         Some(input) => Ok(Some(Lifetime::display_until(parse_until(input)?))),
         None => Ok(None),
     }

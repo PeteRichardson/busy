@@ -87,6 +87,14 @@ fn timeout_and_until_conflict() {
 }
 
 #[test]
+fn text_until_still_produces_a_display_until_field() {
+    // Pinned by issue #12: splitting `draw`'s delivery args away from
+    // `text`'s must not disturb `--until` on `text` itself.
+    let payload = stdout(&["--dry-run", "text", "--until", "2027-01-01T00:00:00Z", "hi"]);
+    assert!(payload.contains("\"display_until\""), "got {payload}");
+}
+
+#[test]
 fn until_accepts_unix_seconds() {
     let payload = stdout(&["--dry-run", "text", "--until", "1900000000", "hi"]);
     // `Lifetime` is `#[serde(untagged)]` and flattened onto the element, and
