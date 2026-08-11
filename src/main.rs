@@ -80,9 +80,7 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
                 cli::AssetCmd::Upload(args) => {
                     cmd::asset::upload(args, &settings, emitter, cli.global.dry_run).await
                 }
-                cli::AssetCmd::List => {
-                    cmd::asset::list(&settings, emitter, cli.global.dry_run).await
-                }
+                cli::AssetCmd::List => cmd::asset::list(&settings, emitter).await,
                 cli::AssetCmd::Delete(args) => {
                     cmd::asset::delete(args, &settings, emitter, cli.global.dry_run).await
                 }

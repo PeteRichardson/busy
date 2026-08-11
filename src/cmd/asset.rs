@@ -11,28 +11,34 @@ use crate::output::Emitter;
 
 /// List this application's assets, read from the device rather than from any
 /// local record — there is no local record, deliberately.
-pub async fn list(settings: &Settings, emitter: &Emitter, dry_run: bool) -> Result<(), CliError> {
-    if dry_run {
-        return emitter.success(&format!("would list assets for `{}`", settings.app), None);
-    }
-
+///
+/// Read-only in its entirety, so it ignores `--dry-run`: running it *is* the
+/// dry run, and `asset delete --dry-run` relies on this exact call to name
+/// what it would destroy. Directory entries are included, not filtered out —
+/// `delete` counts and destroys them, so `list` must show them too, or a
+/// caller relying on "no assets" as a green light for `delete` would be lied
+/// to for an app holding only a subdirectory.
+pub async fn list(settings: &Settings, emitter: &Emitter) -> Result<(), CliError> {
     let device = Device::connect(settings)?;
     let entries = device.list_assets().await?;
 
-    let mut files: Vec<(&str, u64)> = entries
+    let mut files: Vec<(String, Option<u64>, bool)> = entries
         .iter()
-        .filter(|entry| !entry.is_dir())
-        .map(|entry| (entry.name(), entry.size().unwrap_or(0)))
+        .map(|entry| (entry.name().to_owned(), entry.size(), entry.is_dir()))
         .collect();
-    files.sort_by_key(|(name, _)| *name);
+    files.sort_by(|a, b| a.0.cmp(&b.0));
 
     if files.is_empty() {
         return emitter.success_list(&format!("no assets for `{}`", settings.app), &files);
     }
 
     let mut report = String::new();
-    for (name, size) in &files {
-        report.push_str(&format!("{name}\t{size}\n"));
+    for (name, size, is_dir) in &files {
+        if *is_dir {
+            report.push_str(&format!("{name}/\t0\n"));
+        } else {
+            report.push_str(&format!("{name}\t{}\n", size.unwrap_or(0)));
+        }
     }
     report.push_str(&format!("{} asset(s)", files.len()));
 

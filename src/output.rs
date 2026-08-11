@@ -83,7 +83,7 @@ impl Emitter {
             })?;
             body["payload"] = payload;
         }
-        self.emit_success(summary, body)
+        self.emit(summary, body, true)
     }
 
     /// Report success for a listing whose items a machine consumer needs
@@ -91,42 +91,69 @@ impl Emitter {
     /// `summary` is the human-facing text printed as-is without `--json`
     /// (a `name\tsize` block followed by a count line, or a one-line "no
     /// assets" message); under `--json` that text is dropped in favour of an
-    /// `"assets"` array of `{name, size}` objects — present, and `[]` when
-    /// empty, on every call so a consumer can always iterate it rather than
-    /// branching on whether the key exists — so a script never has to
+    /// `"assets"` array of `{name, size, type}` objects — present, and `[]`
+    /// when empty, on every call so a consumer can always iterate it rather
+    /// than branching on whether the key exists — so a script never has to
     /// re-parse tabs and newlines out of a JSON string to get at the data.
+    /// `type` is `"file"` or `"dir"`, spelled out explicitly rather than left
+    /// for a consumer to infer from a trailing slash on `name`, which the
+    /// human-facing `summary` does use. `size` is `null` for a directory.
     /// This is the same class of "technically valid but useless" JSON that
     /// warnings-during-success produced before they were buffered (see
     /// `warn_always`).
-    pub fn success_list(&self, summary: &str, items: &[(&str, u64)]) -> Result<(), CliError> {
+    ///
+    /// Unlike `success`, this is data the caller asked for, not commentary
+    /// about the run — so `--quiet` (whose own help text is "Suppress
+    /// warnings") must not silence it. `emit` is called with
+    /// `respect_quiet: false` accordingly; `--json` is unaffected either way,
+    /// since `--quiet` never suppresses JSON output.
+    pub fn success_list(
+        &self,
+        summary: &str,
+        items: &[(String, Option<u64>, bool)],
+    ) -> Result<(), CliError> {
         let assets: Vec<_> = items
             .iter()
-            .map(|(name, size)| serde_json::json!({"name": name, "size": size}))
+            .map(|(name, size, is_dir)| {
+                serde_json::json!({
+                    "name": name,
+                    "size": size,
+                    "type": if *is_dir { "dir" } else { "file" },
+                })
+            })
             .collect();
         let body = serde_json::json!({
             "ok": true,
             "summary": format!("{} asset(s)", items.len()),
             "assets": assets,
         });
-        self.emit_success(summary, body)
+        self.emit(summary, body, false)
     }
 
     /// Shared tail of every success path: attach any buffered warnings, then
-    /// print `body` as pretty JSON under `--json` or `human` otherwise
-    /// (suppressed under `--quiet`, which only applies outside `--json` —
-    /// `--json --quiet` still prints the JSON document, matching `failure`
-    /// and `dry_run`, which are never suppressed by `--quiet` either).
-    /// Keeping this logic in one place is what stops `success` and
-    /// `success_list` from drifting apart the way the pre-buffering
-    /// `--json`/warning interaction once did.
-    fn emit_success(&self, human: &str, mut body: serde_json::Value) -> Result<(), CliError> {
+    /// print `body` as pretty JSON under `--json` or `human` otherwise.
+    /// `respect_quiet` governs only the human branch: `true` (used by
+    /// `success`) suppresses it under `--quiet`, matching the flag's role as
+    /// silencing commentary; `false` (used by `success_list`) always prints
+    /// it, because a listing's body is the answer to the question the user
+    /// asked, not chatter about the run. `--json --quiet` always prints the
+    /// JSON document either way, matching `failure` and `dry_run`, which are
+    /// never suppressed by `--quiet`. Keeping this logic in one place is what
+    /// stops `success` and `success_list` from drifting apart the way the
+    /// pre-buffering `--json`/warning interaction once did.
+    fn emit(
+        &self,
+        human: &str,
+        mut body: serde_json::Value,
+        respect_quiet: bool,
+    ) -> Result<(), CliError> {
         if self.json {
             self.attach_warnings(&mut body);
             let json = serde_json::to_string_pretty(&body).map_err(|error| {
                 CliError::runtime(format!("could not serialize output: {error}"))
             })?;
             println!("{json}");
-        } else if !self.quiet {
+        } else if !respect_quiet || !self.quiet {
             println!("{human}");
         }
         Ok(())

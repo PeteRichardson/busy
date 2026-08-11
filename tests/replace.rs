@@ -113,6 +113,44 @@ async fn a_plain_draw_of_an_asset_clears_first() {
 }
 
 #[tokio::test]
+async fn draw_json_reports_the_payload() {
+    // Every existing --json integration test runs `text` or `clear`; `draw`'s
+    // --json path was entirely unexercised. Parse the emitted document and
+    // assert on its structure, not on a substring of the text.
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/display/draw"))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/display/draw"))
+        .respond_with(ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let output = busy_at(&server)
+        .args(["--json", "draw", "logo.png"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid json");
+    assert_eq!(value["ok"], true);
+    let elements = value["payload"]["elements"]
+        .as_array()
+        .expect("payload.elements present");
+    assert_eq!(elements.len(), 1);
+    assert_eq!(elements[0]["path"], "logo.png");
+}
+
+#[tokio::test]
 async fn keep_skips_the_clear_for_draw() {
     let server = MockServer::start().await;
     Mock::given(method("DELETE"))
