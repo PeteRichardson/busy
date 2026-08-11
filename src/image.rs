@@ -4,9 +4,17 @@
 //! `device.rs` is the only one importing `busylib`: one file to fix when an
 //! upstream layout moves.
 //!
-//! The device decodes PNG natively but **crops** anything larger than the
-//! panel, silently, returning 200. Fitting the image here is what turns a
-//! logo that renders as its top-left corner into one that renders whole.
+//! The device decodes PNG natively but **rejects** anything larger than the
+//! panel: `display/draw` answers 400 `Image … exceeds display dimensions
+//! 72x16.` even though `assets/upload` accepted the bytes happily. Fitting
+//! the image here is what turns a logo that cannot be drawn at all into one
+//! that renders whole.
+//!
+//! Measured 2026-08-10 on API 25.0.0. This phase's design doc originally
+//! recorded a silent 200-and-crop instead; a re-measurement at merge time
+//! found the 400. Either way the fit is load-bearing — under the old
+//! behaviour it prevented a silent crop, under this one it is the difference
+//! between drawing and a hard error.
 
 use std::io::Cursor;
 

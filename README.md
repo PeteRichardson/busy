@@ -81,13 +81,17 @@ stays out of your shell history and out of `ps`.
 - **ASCII only.** The bar's fonts are bitmap ASCII. Smart quotes, dashes, and
   ellipses are transliterated automatically and a warning is printed; anything
   else is dropped.
-- **Images are fitted, not cropped.** The bar decodes PNG and silently crops
-  anything larger than the panel, so `busy asset upload` scales the image down
-  to fit and tells you when it did. JPEG and GIF are converted to PNG on upload
-  (the bar decodes PNG only) and stored under a `.png` name.
+- **Images are fitted to the panel.** The bar decodes PNG but refuses to draw
+  anything larger than the display — `display/draw` answers `400 Image …
+  exceeds display dimensions 72x16.`, even though the upload itself succeeded.
+  So `busy asset upload` scales the image down to fit and tells you when it
+  did. Aspect ratio is preserved and an image already small enough is never
+  enlarged. JPEG and GIF are converted to PNG on upload (the bar decodes PNG
+  only) and stored under a `.png` name.
 - **`--screen` on `asset upload` is the fit target, not the destination.** An
   image fitted for the back panel still needs `busy draw --screen back` to be
-  drawn there; drawn on the front, the bar will crop it.
+  drawn there. Drawn on the front, a 160x80 asset exceeds the 72x16 panel and
+  the bar rejects it.
 - **Assets are all-or-nothing to delete.** The API has no per-file delete, so
   `busy asset delete` removes every asset for the app. It shows the file list
   it is about to destroy, then asks — `--yes` skips the prompt for CI, and

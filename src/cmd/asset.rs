@@ -85,8 +85,8 @@ pub async fn upload(
 
     if prepared.was_resized() {
         emitter.warn(&format!(
-            "resized {}x{} to {}x{} to fit the {} panel; the bar crops anything larger \
-             without saying so",
+            "resized {}x{} to {}x{} to fit the {} panel; the bar refuses to draw \
+             anything larger",
             prepared.original.0,
             prepared.original.1,
             prepared.final_size.0,

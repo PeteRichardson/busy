@@ -25,7 +25,7 @@ reading frames back through `GET /screen`.
 | Input | `assets/upload` | `display/draw` | Result |
 |---|---|---|---|
 | PNG within the panel | 200 | 200 | renders at its natural size |
-| PNG larger than the panel | 200 | **200** | **silently cropped** to the top-left region |
+| PNG larger than the panel | 200 | **400** | rejected: `Image … exceeds display dimensions 72x16.` — see the correction below |
 | JPEG | **200** | 400 | `Failed to decode image …` |
 | GIF | **200** | 400 | `Failed to decode image …` |
 | Colour PNG on the back panel | 200 | 200 | device does its own colour → greyscale |
@@ -37,12 +37,23 @@ architecture doc's §7 instruction to "re-encode images for the target display" 
 the job — stock assets happen to be `.image` files, but user assets are plain PNG and
 draw fine. We produce PNG, nothing more exotic.
 
-**The device crops rather than scales, and reports success while doing it.** A 200×100
-logo renders as its top-left 72×16 corner with a `200 OK`. Verified by the geometry: the
-test image's diagonal advances two x-pixels per y-pixel on the panel, which is the source
-slope preserved — a crop, not a fit. This is the same silent-failure class as the text
-clipping §8.3 of the command-surface spec already warns about, and it is the reason
-resizing is the load-bearing part of this phase.
+**The device refuses to draw an oversized image.** `display/draw` answers `400` with
+`Image /ext/user_assets/<app>/<file> exceeds display dimensions 72x16.` Resizing is
+therefore the load-bearing part of this phase: without it an oversized asset cannot be
+drawn at all.
+
+> **Correction, re-measured 2026-08-10 at merge time (API 25.0.0).** This section
+> originally recorded a *silent crop* — a `200 OK` rendering the top-left 72×16 corner —
+> and the rest of this document was written against that belief. A re-measurement while
+> repairing `scripts/probe-device.sh` found the `400` above, confirmed by uploading a
+> 200×100 PNG outside the CLI and drawing it directly. The API version is unchanged, so
+> the original reading appears to have been mistaken rather than a firmware change.
+> Nothing built in this phase needed to change: the CLI fits every image locally before
+> upload, which is correct under either behaviour. Read the remaining mentions of "crop"
+> below as "reject" — they are left in place because they record the reasoning as it
+> stood, and every one of them argues for fitting the image, which remains right. The
+> probe script now asserts the real behaviour and reads the frame back, so a genuine
+> future change will be caught.
 
 **`assets/upload` is a dumb byte write.** It accepts a JPEG happily; the failure surfaces
 later, in a different command, as a device error naming an `/ext` path. That seam is bad
