@@ -111,14 +111,6 @@ fn reject_forbidden(name: &str, source: &str) -> Result<(), CliError> {
 ///
 /// Over-reports rather than under-reports: a variable mentioned only inside a
 /// never-taken branch is still listed. `template show` says so.
-// Not yet called outside tests — the commands that consume it land in later
-// tasks of this phase. `cfg_attr(not(test), ...)` keeps the expectation
-// accurate under both `cargo test` and `cargo clippy --all-targets`; once real
-// callers exist, drop this and let dead-code analysis run normally.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired up by later tasks in this phase")
-)]
 pub fn analyse(name: &str, source: &str) -> Result<Vec<String>, CliError> {
     reject_forbidden(name, source)?;
 
@@ -145,10 +137,6 @@ pub fn analyse(name: &str, source: &str) -> Result<Vec<String>, CliError> {
 }
 
 /// Render `source` with `vars`, escaping every substitution.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired up by later tasks in this phase")
-)]
 pub fn render(
     name: &str,
     source: &str,

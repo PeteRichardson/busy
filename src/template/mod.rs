@@ -11,6 +11,7 @@ use serde::Deserialize;
 
 use crate::device::{Color, DisplayElement, DisplayElements, Priority};
 use crate::error::CliError;
+use crate::sanitize;
 
 /// A parsed `template.toml`.
 ///
@@ -24,13 +25,7 @@ use crate::error::CliError;
 ///
 /// `elements` is `Vec<DisplayElement>` — busylib's own type — so `animation`,
 /// `rectangle`, and `countdown` still come along free.
-// `description` is read only by tests (`file.description`); production code
-// (`into_payload`) never reads it back — the field exists to round-trip
-// through `template show`, which Task 5 wires up.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired up by later tasks in this phase")
-)]
+// `description` is read by `cmd::template::{list, show}`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TemplateFile {
@@ -43,10 +38,6 @@ pub struct TemplateFile {
 
 impl TemplateFile {
     /// Supply the envelope the template deliberately omits.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "wired up by later tasks in this phase")
-    )]
     pub fn into_payload(self, app: &str) -> Result<DisplayElements, CliError> {
         let app = crate::device::AppName::new(app.to_owned())
             .map_err(|error| CliError::usage(format!("invalid --app: {error}")))?;
@@ -68,12 +59,8 @@ impl TemplateFile {
 }
 
 /// A template on disk, loaded but not yet rendered.
-// `dir` is read only by tests; no production code reads it back yet (Task 4
-// needs it to resolve a template's relative asset paths).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired up by later tasks in this phase")
-)]
+// `dir` is read by `cmd::template::show` (and used to resolve a template's
+// relative asset paths, e.g. `template::validate::offline`).
 #[derive(Debug, Clone)]
 pub struct Template {
     pub name: String,
@@ -83,10 +70,6 @@ pub struct Template {
 
 impl Template {
     /// Read `<root>/<name>/template.toml`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "wired up by later tasks in this phase")
-    )]
     pub fn load(root: &Path, name: &str) -> Result<Self, CliError> {
         discover::validate_name(name)?;
         let dir = root.join(name);
@@ -119,20 +102,12 @@ impl Template {
     }
 
     /// The variables this template references.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "wired up by later tasks in this phase")
-    )]
     pub fn required_variables(&self) -> Result<Vec<String>, CliError> {
         render::analyse(&self.name, &self.source)
     }
 
     /// Render and parse. The two are one step because a rendered template that
     /// does not parse is a template error, reported against the template name.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "wired up by later tasks in this phase")
-    )]
     pub fn render(&self, vars: &BTreeMap<String, String>) -> Result<TemplateFile, CliError> {
         let rendered = render::render(&self.name, &self.source, vars)?;
         toml::from_str::<TemplateFile>(&rendered).map_err(|error| {
@@ -149,6 +124,11 @@ impl Template {
 /// The positional binds to `message`, which is the one variable common enough
 /// to deserve a positional. Supplying it both ways is an error rather than a
 /// silent precedence rule.
+///
+/// Every value is sanitized to printable ASCII before it is returned — see
+/// `sanitize_values` — so the second element of the tuple is whether any of
+/// them needed it, for the caller to fold into a single once-per-invocation
+/// warning.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "wired up by later tasks in this phase")
@@ -156,7 +136,7 @@ impl Template {
 pub fn bind_variables(
     positional: Option<&str>,
     pairs: &[String],
-) -> Result<BTreeMap<String, String>, CliError> {
+) -> Result<(BTreeMap<String, String>, bool), CliError> {
     let mut vars = BTreeMap::new();
 
     for pair in pairs {
@@ -184,7 +164,39 @@ pub fn bind_variables(
         vars.insert("message".to_owned(), message.to_owned());
     }
 
-    Ok(vars)
+    let changed = sanitize_values(&mut vars);
+    Ok((vars, changed))
+}
+
+/// Sanitize every variable value to printable ASCII in place, the same
+/// transliteration `busy text` applies to its message (`sanitize::to_ascii`).
+/// Returns whether anything changed, so a caller can warn once per
+/// invocation instead of once per variable.
+///
+/// This is not optional, and not just a nicety: `TextElement.text` is
+/// busylib's `Text`, whose `Deserialize` impl rejects non-ASCII bytes
+/// outright. A raw smart quote in a `--var` value would otherwise survive
+/// substitution and then fail deep inside `Template::render`'s
+/// `toml::from_str` as an opaque parse error naming the template — not the
+/// sanitize-and-warn experience `busy text` gives the exact same character.
+/// A template must not be more fragile than a message.
+///
+/// Every path that renders a template must run values through this before
+/// calling `Template::render`. `bind_variables` (above) is the chokepoint
+/// for `--var` and the positional message; it is not the only one, though:
+/// `template validate`'s placeholder binding does not call
+/// `bind_variables` at all (its "values" are one synthetic placeholder per
+/// required variable, not user-typed `k=v` pairs), so `cmd::template::validate`
+/// calls this function directly on its own placeholder map to stay on the
+/// same guarantee.
+pub fn sanitize_values(vars: &mut BTreeMap<String, String>) -> bool {
+    let mut changed = false;
+    for value in vars.values_mut() {
+        let sanitized = sanitize::to_ascii(value);
+        changed |= sanitized.changed;
+        *value = sanitized.text;
+    }
+    changed
 }
 
 /// Reject a `--var` key that no template could ever reference. minijinja
@@ -267,19 +279,21 @@ mod tests {
 
     #[test]
     fn the_positional_binds_to_message() {
-        let bound = bind_variables(Some("Build failed"), &[]).expect("should bind");
+        let (bound, changed) = bind_variables(Some("Build failed"), &[]).expect("should bind");
         assert_eq!(
             bound.get("message").map(String::as_str),
             Some("Build failed")
         );
+        assert!(!changed, "plain ASCII should not report a change");
     }
 
     #[test]
     fn var_pairs_are_parsed_and_may_contain_equals_signs() {
-        let bound = bind_variables(None, &["code=500".to_owned(), "url=a=b".to_owned()])
+        let (bound, changed) = bind_variables(None, &["code=500".to_owned(), "url=a=b".to_owned()])
             .expect("should bind");
         assert_eq!(bound.get("code").map(String::as_str), Some("500"));
         assert_eq!(bound.get("url").map(String::as_str), Some("a=b"));
+        assert!(!changed);
     }
 
     #[test]
@@ -314,16 +328,52 @@ mod tests {
     #[test]
     fn an_empty_value_is_accepted() {
         // `--var note=` legitimately binds an empty string.
-        let bound = bind_variables(None, &["note=".to_owned()]).expect("should bind");
+        let (bound, _) = bind_variables(None, &["note=".to_owned()]).expect("should bind");
         assert_eq!(bound.get("note").map(String::as_str), Some(""));
     }
 
     #[test]
     fn a_repeated_key_takes_the_last_value() {
         // The conventional shell-flag behaviour: last one wins, no error.
-        let bound =
+        let (bound, _) =
             bind_variables(None, &["code=1".to_owned(), "code=2".to_owned()]).expect("should bind");
         assert_eq!(bound.get("code").map(String::as_str), Some("2"));
+    }
+
+    #[test]
+    fn a_variable_value_with_a_smart_quote_is_sanitized_and_reported() {
+        // The addition to Task 5's brief: a template must not be more
+        // fragile than a message. `busy text` transliterates a smart quote
+        // and warns; `--var`/the positional message must get the same
+        // treatment before the value ever reaches `Template::render`, or a
+        // routine `git log -1 --format=%s` value would hard-fail template
+        // rendering with an opaque TOML parse error instead.
+        let (bound, changed) = bind_variables(Some("It\u{2019}s done"), &[]).expect("should bind");
+        assert_eq!(bound.get("message").map(String::as_str), Some("It's done"));
+        assert!(changed, "a transliterated value must report a change");
+    }
+
+    #[test]
+    fn a_sanitized_variable_value_still_renders_successfully() {
+        // Proves the sanitizing actually unblocks the render, not just that
+        // the string comes out looking right in isolation: the whole point
+        // is that `Template::render` must not see the raw non-ASCII byte.
+        let dir = tempdir();
+        std::fs::create_dir_all(dir.join("greet")).unwrap();
+        std::fs::write(
+            dir.join("greet/template.toml"),
+            "description = \"{{ message }}\"\nelements = []\n",
+        )
+        .unwrap();
+
+        let (vars, changed) = bind_variables(Some("It\u{2019}s done"), &[]).expect("should bind");
+        assert!(changed);
+
+        let template = Template::load(&dir, "greet").expect("should load");
+        let file = template
+            .render(&vars)
+            .expect("sanitized value should render");
+        assert_eq!(file.description.as_deref(), Some("It's done"));
     }
 
     #[test]

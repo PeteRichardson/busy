@@ -28,8 +28,44 @@ pub enum Command {
     /// Manage this application's uploaded assets
     #[command(subcommand)]
     Asset(AssetCmd),
+    /// Manage and run templates
+    #[command(subcommand)]
+    Template(TemplateCmd),
     /// Remove everything this application has drawn
     Clear,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TemplateCmd {
+    /// Write the shipped example templates into the template directory
+    Init(TemplateInitArgs),
+    /// List installed templates
+    List,
+    /// Show a template's description, elements, and variables
+    Show(TemplateShowArgs),
+    /// Check templates without contacting the device
+    Validate(TemplateValidateArgs),
+    /// Render a template and draw it
+    Run(Box<DrawArgs>),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct TemplateInitArgs {
+    /// Overwrite an example that already exists
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct TemplateShowArgs {
+    /// Template name
+    pub name: String,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct TemplateValidateArgs {
+    /// Template name; every installed template when omitted
+    pub name: Option<String>,
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -48,6 +84,13 @@ pub struct DrawArgs {
     /// Opacity, 0-100
     #[arg(short = 'o', long)]
     pub opacity: Option<u8>,
+
+    /// Template variable, repeatable: --var key=value
+    #[arg(long = "var", value_name = "KEY=VALUE")]
+    pub vars: Vec<String>,
+
+    /// Optional message; binds to the `message` template variable
+    pub message: Option<String>,
 
     #[command(flatten)]
     pub placement: PlacementArgs,

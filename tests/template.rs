@@ -1,0 +1,170 @@
+mod common;
+
+use common::busy;
+
+/// A template root with `error` (a required variable) and `plain` (none).
+fn root(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("busy-tpl-{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("error")).expect("temp dir");
+    std::fs::write(
+        dir.join("error/template.toml"),
+        r##"description = "Red error text"
+[[elements]]
+id = "message"
+type = "text"
+text = "{{ message }}"
+font = "small"
+color = "#ff0000ff"
+"##,
+    )
+    .expect("write");
+    std::fs::create_dir_all(dir.join("plain")).expect("temp dir");
+    std::fs::write(
+        dir.join("plain/template.toml"),
+        r#"description = "No variables"
+[[elements]]
+id = "message"
+type = "text"
+text = "static"
+font = "small"
+"#,
+    )
+    .expect("write");
+    dir
+}
+
+#[test]
+fn list_names_every_template_with_its_description() {
+    let dir = root("list");
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["template", "list"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("error"), "got {stdout}");
+    assert!(stdout.contains("Red error text"), "got {stdout}");
+    assert!(stdout.contains("plain"), "got {stdout}");
+}
+
+#[test]
+fn show_reports_the_required_variables() {
+    let dir = root("show");
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["template", "show", "error"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("message"),
+        "should name the variable, got {stdout}"
+    );
+}
+
+#[test]
+fn show_of_a_misspelled_name_suggests_the_near_match() {
+    let dir = root("suggest");
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["template", "show", "eror"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Did you mean `error`"), "got {stderr}");
+}
+
+#[test]
+fn validate_accepts_a_good_template() {
+    let dir = root("valid");
+    busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["template", "validate"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn validate_rejects_a_duplicate_element_id() {
+    let dir = std::env::temp_dir().join("busy-tpl-dup");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("dup")).expect("temp dir");
+    std::fs::write(
+        dir.join("dup/template.toml"),
+        r#"[[elements]]
+id = "a"
+type = "text"
+text = "one"
+font = "small"
+[[elements]]
+id = "a"
+type = "text"
+text = "two"
+font = "small"
+"#,
+    )
+    .expect("write");
+
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["template", "validate", "dup"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("duplicate element id"),
+        "got {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// Addition to the Task 5 brief: a `--var`/positional variable value with a
+/// smart quote is sanitized (see the unit tests in `src/template/mod.rs` for
+/// the render-succeeds-with-a-warning half, which has no CLI-reachable path
+/// in this task — `template validate`'s placeholder is always the literal
+/// `"x"`, and `run`/`draw --var` aren't wired up until Task 7). This test
+/// covers the other half, which *is* CLI-reachable today: literal non-ASCII
+/// in the template file's own text is a template-author problem, not a
+/// caller-supplied-value problem, and must keep hard-failing rather than
+/// being silently transliterated.
+#[test]
+fn a_literal_smart_quote_in_the_template_text_still_hard_fails_naming_the_template() {
+    let dir = std::env::temp_dir().join("busy-tpl-literal-non-ascii");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("smartquote")).expect("temp dir");
+    std::fs::write(
+        dir.join("smartquote/template.toml"),
+        "[[elements]]\nid = \"a\"\ntype = \"text\"\ntext = \"It\u{2019}s done\"\nfont = \"small\"\n",
+    )
+    .expect("write");
+
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["template", "validate", "smartquote"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("smartquote"),
+        "should name the template, got {stderr}"
+    );
+}

@@ -14,17 +14,6 @@ use crate::error::CliError;
 /// `None` means the platform gave us no config directory at all. A root that
 /// simply does not exist yet is `Some` — `list` reports it as empty and
 /// `template init` creates it.
-// Not yet called outside tests — Task 5 (`cmd::template::root`) wires this
-// up. `cfg_attr(not(test), ...)` keeps the expectation accurate under both
-// `cargo test` and `cargo clippy --all-targets`; once that caller exists,
-// drop this and let dead-code analysis run normally.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "wired up by Task 5 of this phase (cmd::template::root)"
-    )
-)]
 pub fn root(flag: Option<&Path>) -> Option<PathBuf> {
     if let Some(path) = flag {
         return Some(path.to_path_buf());

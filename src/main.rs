@@ -126,6 +126,23 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
 
             emitter.success("drawn", Some(&payload))
         }
+        Command::Template(command) => {
+            let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
+            let root = cmd::template::root(cli.global.template_dir.as_deref())?;
+            match command {
+                cli::TemplateCmd::List => cmd::template::list(&root, emitter),
+                cli::TemplateCmd::Show(args) => cmd::template::show(args, &root, emitter),
+                cli::TemplateCmd::Validate(args) => {
+                    cmd::template::validate(args, &root, &settings, emitter)
+                }
+                cli::TemplateCmd::Init(_) => {
+                    Err(CliError::runtime("`busy template init` arrives in Task 6"))
+                }
+                cli::TemplateCmd::Run(_) => {
+                    Err(CliError::runtime("`busy template run` arrives in Task 7"))
+                }
+            }
+        }
         Command::Clear => {
             let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
             cmd::clear::run(&settings, emitter, cli.global.dry_run).await

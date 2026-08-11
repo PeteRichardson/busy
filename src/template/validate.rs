@@ -18,10 +18,9 @@ pub struct Report {
 }
 
 impl Report {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "wired up by Task 5 of this phase")
-    )]
+    // `cmd::template::validate` (Task 5) checks `report.errors`/`report.warnings`
+    // directly rather than calling this — still no production caller.
+    #[cfg_attr(not(test), expect(dead_code, reason = "no production caller yet"))]
     pub fn is_ok(&self) -> bool {
         self.errors.is_empty()
     }
@@ -69,11 +68,10 @@ pub fn referenced_assets(payload: &DisplayElements) -> Vec<String> {
 /// it; `sanitize::to_ascii` applied to an already-validated `Text` can never
 /// report a change. Confirmed: no public busylib API can construct a `Text`
 /// holding a non-ASCII byte, so there is no fixture that could ever exercise
-/// a sanitize-and-warn branch here.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired up by Task 5 of this phase")
-)]
+/// a sanitize-and-warn branch here. (Task 5 puts the sanitizing pass where it
+/// belongs instead: upstream of `Template::render`, in `bind_variables` and
+/// `cmd::template::validate`'s placeholder binding — see
+/// `template::sanitize_values`.)
 pub fn offline(payload: &DisplayElements, dir: &Path) -> Report {
     let mut report = Report::default();
 
