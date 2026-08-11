@@ -116,3 +116,78 @@ fn draw_with_no_name_and_no_file_is_an_error() {
         .expect("should run");
     assert_eq!(output.status.code(), Some(2));
 }
+
+#[test]
+fn a_raw_payload_file_is_drawn_verbatim() {
+    let path = std::env::temp_dir().join("busy-test-payload.json");
+    std::fs::write(
+        &path,
+        r#"{
+            "application_name": "busy",
+            "priority": 95,
+            "elements": [
+                {"id": "a", "type": "text", "text": "from a file", "font": "small"}
+            ]
+        }"#,
+    )
+    .expect("write payload");
+
+    let output = busy()
+        .args(["--dry-run", "draw", "--file"])
+        .arg(&path)
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("from a file"), "got {stdout}");
+}
+
+#[test]
+fn a_malformed_payload_file_names_the_path_and_the_problem() {
+    let path = std::env::temp_dir().join("busy-test-bad.json");
+    std::fs::write(&path, "{ not json at all").expect("write payload");
+
+    let output = busy()
+        .args(["--dry-run", "draw", "--file"])
+        .arg(&path)
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("busy-test-bad.json"), "got {stderr}");
+}
+
+#[test]
+fn file_and_a_name_are_mutually_exclusive() {
+    let output = busy()
+        .args(["--dry-run", "draw", "logo.png", "--file", "/tmp/x.json"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn id_is_an_error_with_file_because_ids_come_from_the_payload() {
+    // A payload file names its own elements. Silently ignoring --id would let
+    // a user believe they had renamed something they had not.
+    let path = std::env::temp_dir().join("busy-test-id.json");
+    std::fs::write(
+        &path,
+        r#"{"application_name":"busy","elements":[{"id":"a","type":"text","text":"x","font":"small"}]}"#,
+    )
+    .expect("write payload");
+
+    let output = busy()
+        .args(["--dry-run", "draw", "--id", "mine", "--file"])
+        .arg(&path)
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--id"), "got {stderr}");
+    assert!(stderr.contains("--file"), "got {stderr}");
+}

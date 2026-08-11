@@ -56,16 +56,9 @@ pub fn build_payload(
     file: &FileConfig,
     resolved: &Resolved,
 ) -> Result<DisplayElements, CliError> {
-    // `text` owns the RFC 3339 parsing for `--until`; duplicating it here would
-    // be the kind of copy this project has been careful to avoid. Rather than
-    // silently accepting the flag and ignoring it, reject it loudly until a
-    // shared home for `parse_until` exists (a separate change).
-    if args.delivery.until.is_some() {
-        return Err(CliError::usage(
-            "--until is not yet supported on `draw`; use --timeout instead",
-        ));
-    }
-
+    // `--until` is rejected in `main.rs` before this function is reached, so
+    // both the --file and the named-draw paths get the same gate from one
+    // place rather than two copies that could drift.
     let mut element = match resolved {
         Resolved::Asset(path) => ImageElement::asset(path.clone()),
         Resolved::Stock(path) => ImageElement::stock(path.clone()),
@@ -126,4 +119,21 @@ pub fn build_payload(
     }
 
     Ok(payload)
+}
+
+/// Load a raw `DisplayElements` payload from a file.
+///
+/// The template file format in Phase 4 deserializes into the same type, which
+/// is what makes animation, countdown, and rectangle elements reachable without
+/// this project modelling them. This is the same door, opened early.
+pub fn load_file(path: &std::path::Path) -> Result<DisplayElements, CliError> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| CliError::usage(format!("could not read {}: {error}", path.display())))?;
+
+    serde_json::from_str(&text).map_err(|error| {
+        CliError::usage(format!(
+            "{} is not a valid display payload: {error}",
+            path.display()
+        ))
+    })
 }

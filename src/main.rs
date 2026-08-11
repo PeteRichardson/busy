@@ -90,8 +90,37 @@ async fn run(cli: &Cli, emitter: &Emitter) -> Result<(), CliError> {
         }
         Command::Draw(args) => {
             let settings = config::resolve(&cli.global, &cli::StyleArgs::default(), &env, &file)?;
-            let resolved = cmd::draw::resolve(args)?;
-            let payload = cmd::draw::build_payload(args, &settings, &file, &resolved)?;
+
+            // `text` owns the RFC 3339 parsing for `--until`; duplicating it
+            // here would be the kind of copy this project has been careful
+            // to avoid. This check sits before the --file branch so `--until`
+            // is rejected the same way on both the --file and the named-draw
+            // paths, rather than only on the one that happens to call
+            // `build_payload`.
+            if args.delivery.until.is_some() {
+                return Err(CliError::usage(
+                    "--until is not yet supported on `draw`; use --timeout instead",
+                ));
+            }
+
+            let payload = match &args.file {
+                Some(path) => {
+                    // A payload file names its own elements. Silently
+                    // ignoring --id would let the user believe they had
+                    // renamed something they had not.
+                    if args.delivery.id.is_some() {
+                        return Err(CliError::usage(
+                            "--id cannot be used with --file: element ids come from the \
+                             payload. Edit the file's `id` fields instead.",
+                        ));
+                    }
+                    cmd::draw::load_file(path)?
+                }
+                None => {
+                    let resolved = cmd::draw::resolve(args)?;
+                    cmd::draw::build_payload(args, &settings, &file, &resolved)?
+                }
+            };
 
             for warning in validate::bounds_warnings(&payload) {
                 emitter.warn(&warning);
