@@ -83,7 +83,7 @@ pub fn list(root: &Path) -> Vec<String> {
     expect(dead_code, reason = "wired up by later tasks in this phase")
 )]
 pub fn suggest(name: &str, candidates: &[String]) -> Option<String> {
-    let threshold = 2.max(name.len() / 3);
+    let threshold = (name.len() / 3 + 1).min(2);
     candidates
         .iter()
         .map(|candidate| (distance(name, candidate), candidate))
@@ -165,6 +165,44 @@ mod tests {
         let names = vec!["error".to_owned(), "ok".to_owned()];
         assert_eq!(suggest("eror", &names), Some("error".to_owned()));
         assert_eq!(suggest("wildly-different", &names), None);
+    }
+
+    #[test]
+    fn the_threshold_does_not_grow_without_bound_for_long_names() {
+        // A long name must not accept a match many edits away: the old
+        // formula (`2.max(name.len() / 3)`) grew unboundedly with length,
+        // so a 30+ character name would accept a distance-10 "match".
+        let names = vec!["error".to_owned()];
+        assert_eq!(suggest("deployment-completed-successfully", &names), None);
+    }
+
+    #[test]
+    fn a_short_name_only_matches_at_distance_one() {
+        // A 1- or 2-character name is too short for a distance of 2 to mean
+        // anything: it would match almost any candidate.
+        let names = vec!["ok".to_owned()];
+        assert_eq!(suggest("okk", &names), Some("ok".to_owned()));
+        assert_eq!(suggest("xyz", &names), None);
+    }
+
+    #[test]
+    fn the_cap_is_actually_a_cap_not_just_a_low_floor() {
+        // The two tests above happen to pass under the old, unbounded
+        // formula too (the distances involved are large enough that both
+        // formulas agree). This test picks distances that sit inside the
+        // old formula's threshold but outside the new cap, so a reversion
+        // to `2.max(name.len() / 3)` is actually caught.
+        let one_char_query = "a";
+        // distance("a", "abc") == 2: old threshold = max(2, 0) = 2 (would
+        // match); new threshold = min(2, 0/3 + 1) = 1 (must not match).
+        assert_eq!(suggest(one_char_query, &["abc".to_owned()]), None);
+
+        let long_query = "a".repeat(30);
+        let mut near_miss = "a".repeat(25);
+        near_miss.push_str("bbbbb");
+        // distance == 5: old threshold = max(2, 10) = 10 (would match); new
+        // threshold = min(2, 10 + 1) = 2 (must not match).
+        assert_eq!(suggest(&long_query, &[near_miss]), None);
     }
 
     /// A unique temp directory for one test. `std::env::temp_dir()` is shared,
