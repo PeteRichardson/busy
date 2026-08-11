@@ -1,7 +1,8 @@
 # Short option names
 
 **Status: implemented on `main` (2026-08-10).** The mapping below shipped exactly
-as specified, with one correction noted under Globals.
+as specified, with one correction noted under Globals. **Phase 3 added two letters
+this table did not anticipate — see "Added by Phase 3" below.**
 
 The blocking condition is resolved: the foundation plan finished, merged, and the
 `worktree-busy-cli-foundation` worktree and branch were removed. `main` now holds
@@ -49,6 +50,25 @@ Unavailable: `-h` and `-V` (clap), `-m` (forbidden by a Global Constraint and by
 `tests/cli_surface.rs::there_is_no_message_flag`).
 
 Still free afterwards: `-b -d -e -g -o -v -z` and every capital.
+
+## Added by Phase 3 (2026-08-10)
+
+| Short | Long | Scope |
+|---|---|---|
+| `-o` | `--opacity` | `busy draw` |
+| `-y` | `--yes` | `busy asset delete` **only** |
+
+`-o` was reserved for exactly this in the design spec, so it costs nothing.
+
+**`-y` deliberately reuses the letter this table gives to `--y`.** It is the only
+reuse in the surface, and it is safe because the two never meet: `--y` lives in
+`PlacementArgs`, which `asset delete` does not flatten, and `asset delete` takes
+no position. clap therefore cannot detect the collision for us — nothing will
+fail if a future subcommand flattens both — so the guard is this note plus the
+README's wording. If a placement-taking subcommand ever needs a `--yes`, rename
+it there rather than dropping `--y`.
+
+Still free after Phase 3: `-b -d -e -g -v -z` and every capital.
 
 ## Rationale for the contested letters
 

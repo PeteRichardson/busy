@@ -181,8 +181,8 @@ pub async fn delete(
         let mut answer = String::new();
         std::io::stdin()
             .read_line(&mut answer)
-            .map_err(|error| CliError::usage(format!("could not read confirmation: {error}")))?;
-        if !matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+            .map_err(|error| CliError::runtime(format!("could not read confirmation: {error}")))?;
+        if !is_affirmative(&answer) {
             return emitter.success("cancelled", None);
         }
     } else {
@@ -214,9 +214,32 @@ fn confirm_prompt(out: &mut impl std::io::Write, emitter: &Emitter, summary: &st
     let _ = write!(out, "Delete them? [y/N] ");
 }
 
+/// Whether a confirmation answer means yes.
+///
+/// Extracted so the predicate itself is testable: the prompt advertises
+/// `[y/N]`, so anything that is not an explicit yes — including a bare Enter
+/// and an EOF, both of which arrive as an empty string — must cancel. This
+/// guards the only irreversible command in the tool, and inverting or
+/// widening it by accident is how a bare Enter comes to delete everything.
+fn is_affirmative(answer: &str) -> bool {
+    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::confirm_prompt;
+    use super::{confirm_prompt, is_affirmative};
+
+    #[test]
+    fn only_an_explicit_yes_confirms_a_delete() {
+        for yes in ["y", "Y", "yes", "YES", "Yes", " y \n", "yes\r\n"] {
+            assert!(is_affirmative(yes), "{yes:?} should confirm");
+        }
+        // A bare Enter and an EOF both arrive as an empty string; treating
+        // either as consent would destroy every asset the app owns.
+        for no in ["", "\n", "   ", "n", "N", "no", "NO", "yolo", "ye", "y es"] {
+            assert!(!is_affirmative(no), "{no:?} must NOT confirm");
+        }
+    }
     use crate::output::Emitter;
 
     #[test]

@@ -26,7 +26,9 @@ Every per-invocation flag has a short form; the long form always works too.
 | `-i` `--id` | `-k` `--keep` | `-n` `--dry-run` | `-j` `--json` |
 | `-o` `--opacity` | | | |
 
-`-q`/`--quiet` too. The connection options — `--addr`, `--app`, `--token`,
+`-q`/`--quiet` too. One letter is reused: `-y` is `--y` on the commands that
+take a position, and `--yes` on `busy asset delete`, which takes none. The two
+never appear on the same subcommand. The connection options — `--addr`, `--app`, `--token`,
 `--api-prefix`, `--http-timeout` — are deliberately long-only: they are typed
 rarely, a global short is reserved across every subcommand, and a short
 `--token` would invite secrets into shell history and `ps`.
