@@ -176,8 +176,13 @@ typo'd name from becoming a silently doomed asset draw once templates exist.
 
 Deserialize the file directly into `busylib`'s `DisplayElements` and draw it, giving
 parity with upstream `busybar assets draw --file`. It needs no template machinery, so it
-lands here. Delivery flags still apply as overrides; a deserialization failure is a usage
-error quoting the serde message and the offending path.
+lands here. Only the payload-level delivery flags apply as overrides — `--priority` and
+`--led` — since a payload has exactly one of each; absent flags leave the file's own
+values untouched. `--opacity`, `-x`/`-y`, `--align`, `--screen`, `--timeout`, `--id`, and
+`--until` are per-element fields with no principled way to pick which element a single
+flag applies to, so they are usage errors with `--file`, and `--keep` still applies as
+usual. A deserialization failure is a usage error quoting the serde message and the
+offending path.
 
 ### 4.3 `--id`
 
@@ -247,7 +252,8 @@ guidance and surfaces the device's own 400 text — the latter matters here, sin
 - **`tests/asset.rs`:** wiremock upload/list/delete, including the 400-means-empty list,
   the `--yes` path, and the refusal when stdin is not a tty and `--yes` is absent.
 - **`tests/draw.rs`:** resolution order, `--as` override, second-positional error,
-  `--file` round trip, `--opacity` reaching the payload.
+  `--file` round trip, `--opacity` reaching the payload for a named draw, and `--opacity`
+  (with the other per-element flags) rejected as a usage error when combined with `--file`.
 - **Golden snapshots** for image payloads via `--dry-run`, as for text.
 - **One real-device verification** in the final task: upload an oversized PNG, confirm the
   CLI resized it, draw it, and read the frame back to prove the whole image is on the

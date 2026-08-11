@@ -18,7 +18,7 @@ AUTH="Authorization: Bearer $BUSY_TOKEN"
 PROBE=$(mktemp -t probe).png
 
 say() { printf '\n=== %s\n' "$1"; }
-trap 'rm -f "$PROBE" "$PROBE.readback"' EXIT
+trap 'rm -f "$PROBE" "$PROBE.readback" "$PROBE.big" "$PROBE.jpg"' EXIT
 
 # An 8x8 1-bit greyscale PNG, 73 bytes.
 printf '%s' \
@@ -73,7 +73,26 @@ printf '  omitted=%s top_left=%s -> %s\n' "$none" "$tl" \
   "$([ "$none" = "$tl" ] && echo 'MATCH (device default is top_left)' || echo 'CHANGED — the device default is no longer top_left')"
 curl -s -H "$AUTH" -X DELETE "$BAR/display/draw?application_name=$APP" >/dev/null
 
-say "10. cleanup — delete-all, then list (expect 400: the directory itself is gone)"
+say "10. oversized images — expect a 200 and a CROPPED render, not a scaled one"
+# A 16x16 red square; drawn at 8x8 the device would scale, at 16x16 it crops.
+printf '%s' \
+  'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAQAAAAA3iMLMAAAAEUlEQVR4nGP4z0AswKqSCAAA//8DAAoAAv8Ex4CqAAAAAElFTkSuQmCC' \
+  | base64 -d > "$PROBE.big"
+curl -s -H "$AUTH" -H 'Content-Type: application/octet-stream' --data-binary "@$PROBE.big" \
+  "$BAR/assets/upload?application_name=$APP&file=big.png" ; echo
+curl -s -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BAR/display/draw" \
+  -d "{\"application_name\":\"$APP\",\"priority\":95,\"elements\":[{\"id\":\"b\",\"type\":\"image\",\"path\":\"big.png\",\"x\":0,\"y\":0,\"align\":\"top_left\"}]}" ; echo
+
+say "11. JPEG — expect upload 200 and draw 400 (the device decodes PNG only)"
+sips -s format jpeg "$PROBE" --out "$PROBE.jpg" >/dev/null 2>&1 || echo "  (sips unavailable, skipping)"
+if [ -f "$PROBE.jpg" ]; then
+  curl -s -H "$AUTH" -H 'Content-Type: application/octet-stream' --data-binary "@$PROBE.jpg" \
+    "$BAR/assets/upload?application_name=$APP&file=probe.jpg" ; echo
+  curl -s -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BAR/display/draw" \
+    -d "{\"application_name\":\"$APP\",\"priority\":95,\"elements\":[{\"id\":\"j\",\"type\":\"image\",\"path\":\"probe.jpg\"}]}" ; echo
+fi
+
+say "12. cleanup — delete-all, then list (expect 400: the directory itself is gone)"
 curl -s -H "$AUTH" -X DELETE "$BAR/display/draw?application_name=$APP"; echo
 curl -s -H "$AUTH" -X DELETE "$BAR/assets/upload?application_name=$APP"; echo
 curl -s -H "$AUTH" "$BAR/storage/list?path=/ext/user_assets/$APP"; echo
