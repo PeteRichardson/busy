@@ -1,6 +1,8 @@
 mod common;
 
 use common::busy;
+use wiremock::matchers::{method, path as mock_path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// A template root with `error` (a required variable) and `plain` (none).
 fn root(tag: &str) -> std::path::PathBuf {
@@ -273,5 +275,86 @@ fn show_json_carries_structured_fields() {
             .expect("path should be a string")
             .contains("error"),
         "got {value}"
+    );
+}
+
+#[tokio::test]
+async fn a_template_referencing_an_absent_asset_names_the_upload_command() {
+    let dir = std::env::temp_dir().join("busy-tpl-asset");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("logo")).expect("temp dir");
+    std::fs::write(
+        dir.join("logo/template.toml"),
+        "[[elements]]\nid = \"i\"\ntype = \"image\"\npath = \"stop.png\"\n",
+    )
+    .expect("write");
+    // The local file exists, so offline validation passes; the device does not
+    // have it, which is what this check is for.
+    std::fs::write(dir.join("logo/stop.png"), b"not really a png").expect("write");
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(mock_path("/api/storage/list"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"list": []})))
+        .mount(&server)
+        .await;
+
+    let output = common::busy_at(&server)
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["draw", "logo"])
+        .output()
+        .expect("should run");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("stop.png"), "got {stderr}");
+    assert!(
+        stderr.contains("busy asset upload"),
+        "must name the fix, got {stderr}"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_listing_does_not_block_the_draw() {
+    // `/ext/user_assets/<app>/` is undocumented. A firmware change must not
+    // break the tool; it may only make the resulting error later and worse.
+    let dir = std::env::temp_dir().join("busy-tpl-degrade");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("logo")).expect("temp dir");
+    std::fs::write(
+        dir.join("logo/template.toml"),
+        "[[elements]]\nid = \"i\"\ntype = \"image\"\npath = \"stop.png\"\n",
+    )
+    .expect("write");
+    std::fs::write(dir.join("logo/stop.png"), b"not really a png").expect("write");
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(mock_path("/api/storage/list"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .respond_with(common::ok())
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(mock_path("/api/display/draw"))
+        .respond_with(common::ok())
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let output = common::busy_at(&server)
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["draw", "logo"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "a failed listing must not block: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }

@@ -281,3 +281,51 @@ pub fn init(
         true,
     )
 }
+
+/// Confirm every app asset a template references is on the device.
+///
+/// 4a checks and explains; 4b uploads. This is step 1 of the sync described in
+/// the command-surface spec §5.5, so 4b adds steps 2-4 rather than replacing it.
+///
+/// `Device::list_assets` already maps the directory-missing 400 to an empty
+/// list, so `Ok(entries)` is authoritative — a name absent from an empty list
+/// is genuinely not on the device. An `Err` means the listing itself failed,
+/// and the check is skipped entirely: this must never be the reason a draw
+/// fails.
+pub async fn check_assets_present(
+    device: &crate::device::Device,
+    payload: &crate::device::DisplayElements,
+    dir: &std::path::Path,
+    name: &str,
+) -> Result<(), CliError> {
+    let referenced = validate::referenced_assets(payload);
+    if referenced.is_empty() {
+        return Ok(());
+    }
+
+    let Ok(entries) = device.list_assets().await else {
+        return Ok(());
+    };
+    let present: Vec<String> = entries.iter().map(|e| e.name().to_owned()).collect();
+
+    let missing: Vec<String> = referenced
+        .into_iter()
+        .filter(|asset| !present.contains(asset))
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    let uploads: Vec<String> = missing
+        .iter()
+        .map(|asset| format!("  busy asset upload {}", dir.join(asset).display()))
+        .collect();
+
+    Err(CliError::usage(format!(
+        "template `{name}` references {}, which {} not uploaded.\nRun:\n{}",
+        missing.join(", "),
+        if missing.len() == 1 { "is" } else { "are" },
+        uploads.join("\n")
+    )))
+}

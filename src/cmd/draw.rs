@@ -87,46 +87,51 @@ pub async fn run(
     dry_run: bool,
     root: &Path,
 ) -> Result<(), CliError> {
-    let (payload, kind) = match &args.file {
-        Some(path) => (load_file(path)?, Kind::File),
-        None => match resolve(args, root)? {
-            Resolved::Template(template) => {
-                let (vars, changed) =
-                    template::bind_variables(args.message.as_deref(), &args.vars)?;
-                if changed {
-                    emitter.warn(SANITIZED_VARIABLE_WARNING);
-                }
+    let (payload, kind, template_context): (_, _, Option<(std::path::PathBuf, String)>) =
+        match &args.file {
+            Some(path) => (load_file(path)?, Kind::File, None),
+            None => match resolve(args, root)? {
+                Resolved::Template(template) => {
+                    let (vars, changed) =
+                        template::bind_variables(args.message.as_deref(), &args.vars)?;
+                    if changed {
+                        emitter.warn(SANITIZED_VARIABLE_WARNING);
+                    }
 
-                // Catch a missing variable here, against the static
-                // analysis, rather than letting `render` hit it mid-
-                // substitution: minijinja's own "undefined value" names
-                // neither the variable nor how to supply it, and forgetting
-                // one (`message`, above all) is the most common mistake a
-                // template user makes.
-                template.check_required_variables(&vars)?;
+                    // Catch a missing variable here, against the static
+                    // analysis, rather than letting `render` hit it mid-
+                    // substitution: minijinja's own "undefined value" names
+                    // neither the variable nor how to supply it, and forgetting
+                    // one (`message`, above all) is the most common mistake a
+                    // template user makes.
+                    template.check_required_variables(&vars)?;
 
-                let rendered = template.render(&vars)?;
-                let payload = rendered.into_payload(&settings.app)?;
+                    let rendered = template.render(&vars)?;
+                    let payload = rendered.into_payload(&settings.app)?;
 
-                let report = template::validate::offline(&payload, &template.dir);
-                if !report.is_ok() {
-                    return Err(CliError::usage(report.errors.join("\n")));
+                    let report = template::validate::offline(&payload, &template.dir);
+                    if !report.is_ok() {
+                        return Err(CliError::usage(report.errors.join("\n")));
+                    }
+                    for warning in &report.warnings {
+                        emitter.warn(warning);
+                    }
+                    (
+                        payload,
+                        Kind::Template,
+                        Some((template.dir.clone(), template.name.clone())),
+                    )
                 }
-                for warning in &report.warnings {
-                    emitter.warn(warning);
+                resolved => {
+                    let kind = if matches!(resolved, Resolved::Stock(_)) {
+                        Kind::Stock
+                    } else {
+                        Kind::Image
+                    };
+                    (build_payload(args, settings, file, &resolved)?, kind, None)
                 }
-                (payload, Kind::Template)
-            }
-            resolved => {
-                let kind = if matches!(resolved, Resolved::Stock(_)) {
-                    Kind::Stock
-                } else {
-                    Kind::Image
-                };
-                (build_payload(args, settings, file, &resolved)?, kind)
-            }
-        },
-    };
+            },
+        };
 
     overrides::reject_vars_unless_template(args, kind)?;
     let payload = overrides::apply(payload, args, kind)?;
@@ -140,6 +145,14 @@ pub async fn run(
     }
 
     let device = Device::connect(settings)?;
+
+    // Must run before the `--keep`-gated `clear()` below: a template with a
+    // missing asset must not first wipe whatever is already on the panel and
+    // only then refuse to draw.
+    if let Some((dir, name)) = &template_context {
+        crate::cmd::template::check_assets_present(&device, &payload, dir, name).await?;
+    }
+
     if !args.delivery.keep {
         device.clear().await?;
     }
