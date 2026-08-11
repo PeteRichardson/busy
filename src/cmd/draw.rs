@@ -97,6 +97,14 @@ pub async fn run(
                     emitter.warn(SANITIZED_VARIABLE_WARNING);
                 }
 
+                // Catch a missing variable here, against the static
+                // analysis, rather than letting `render` hit it mid-
+                // substitution: minijinja's own "undefined value" names
+                // neither the variable nor how to supply it, and forgetting
+                // one (`message`, above all) is the most common mistake a
+                // template user makes.
+                template.check_required_variables(&vars)?;
+
                 let rendered = template.render(&vars)?;
                 let payload = rendered.into_payload(&settings.app)?;
 
@@ -146,8 +154,12 @@ pub async fn run(
 ///
 /// Never called with `Resolved::Template`: `run` renders a template on its
 /// own branch, well before this function, because a template arrives with
-/// its elements already decided rather than built from these flags.
-pub fn build_payload(
+/// its elements already decided rather than built from these flags. Private
+/// — `run`, in this module, is the only caller (this crate has no library
+/// target; nothing outside `cmd::draw` can reach this function at all) — so
+/// the `unreachable!()` below is exactly that: unreachable, not merely
+/// undocumented API misuse from some other module.
+fn build_payload(
     args: &DrawArgs,
     settings: &Settings,
     file: &FileConfig,

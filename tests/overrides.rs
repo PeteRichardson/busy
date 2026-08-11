@@ -217,3 +217,67 @@ fn a_smart_quote_in_a_var_is_sanitized_and_warned_about() {
         "should warn about the substitution, got {stderr}"
     );
 }
+
+// Fix round 1: a missing required variable used to surface as minijinja's
+// raw `undefined value (in <name>:<line>)`, which names neither the
+// variable nor how to supply it — even though `render::analyse` already
+// knows what's required, and `bind_variables` already knows what was
+// supplied. These two are the CLI-level proof that the comparison actually
+// runs before rendering and produces a real message; unit coverage for the
+// wording itself lives in `src/template/mod.rs`.
+
+#[test]
+fn a_missing_required_variable_names_the_template_and_the_variable_via_the_cli() {
+    let dir = std::env::temp_dir().join("busy-ovr-missing-message");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("greet")).expect("temp dir");
+    std::fs::write(
+        dir.join("greet/template.toml"),
+        "[[elements]]\nid = \"a\"\ntype = \"text\"\ntext = \"{{ message }}\"\nfont = \"small\"\n",
+    )
+    .expect("write");
+
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["--dry-run", "draw", "greet"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("greet"),
+        "should name the template, got {stderr}"
+    );
+    assert!(
+        stderr.contains("message"),
+        "should name the variable, got {stderr}"
+    );
+    assert!(
+        !stderr.contains("undefined value"),
+        "must not be minijinja's raw message, got {stderr}"
+    );
+}
+
+#[test]
+fn two_missing_required_variables_are_both_named_via_the_cli() {
+    let dir = std::env::temp_dir().join("busy-ovr-missing-two");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("both")).expect("temp dir");
+    std::fs::write(
+        dir.join("both/template.toml"),
+        "[[elements]]\nid = \"a\"\ntype = \"text\"\ntext = \"{{ first }} {{ second }}\"\nfont = \"small\"\n",
+    )
+    .expect("write");
+
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["--dry-run", "draw", "both"])
+        .output()
+        .expect("should run");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("first"), "got {stderr}");
+    assert!(stderr.contains("second"), "got {stderr}");
+}

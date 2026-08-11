@@ -106,6 +106,40 @@ impl Template {
         render::analyse(&self.name, &self.source)
     }
 
+    /// Compare this template's statically-analysed required variables
+    /// against what was actually supplied (`bind_variables`'s output), and
+    /// fail with a real message naming every missing one.
+    ///
+    /// Without this, a missing variable only surfaces once `render` hits it
+    /// mid-substitution, as minijinja's raw `undefined value (in
+    /// <name>:<line>)` — which names neither the variable nor how to supply
+    /// it. Forgetting a variable (`message`, above all) is the single most
+    /// common mistake a template user makes, so it is worth catching with
+    /// the static analysis `required_variables` already runs, before
+    /// rendering, rather than leaving strict-undefined as the only report.
+    /// `render`'s strict-undefined behaviour stays in place regardless, as
+    /// the backstop for anything this comparison does not catch — a
+    /// variable used only inside a branch this analysis still sees, but a
+    /// caller happens to supply under a name that doesn't match, say.
+    ///
+    /// `--var <name>=…` is the only way to supply anything but `message`,
+    /// which doubles as the positional argument, so "pass it positionally"
+    /// is only ever suggested for `message`.
+    pub fn check_required_variables(
+        &self,
+        supplied: &BTreeMap<String, String>,
+    ) -> Result<(), CliError> {
+        let required = self.required_variables()?;
+        let missing: Vec<String> = required
+            .into_iter()
+            .filter(|key| !supplied.contains_key(key.as_str()))
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        Err(missing_variables_error(&self.name, &missing))
+    }
+
     /// Render and parse. The two are one step because a rendered template that
     /// does not parse is a template error, reported against the template name.
     pub fn render(&self, vars: &BTreeMap<String, String>) -> Result<TemplateFile, CliError> {
@@ -117,6 +151,58 @@ impl Template {
             ))
         })
     }
+}
+
+/// Build the "template `x` requires variable(s) …" error for
+/// `Template::check_required_variables`. `missing` must be non-empty and
+/// already sorted (it comes straight from `required_variables`, which
+/// sorts).
+///
+/// `message` gets its own clause ("pass it as the positional argument")
+/// alongside `--var message=…`, because it is the one variable with a second
+/// way in. Every other missing variable only ever gets the `--var` form —
+/// suggesting a positional for anything else would describe a flag that
+/// does not exist.
+fn missing_variables_error(name: &str, missing: &[String]) -> CliError {
+    let var_flags = |names: &[String]| -> String {
+        names
+            .iter()
+            .map(|var| format!("`--var {var}=…`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let has_message = missing.iter().any(|var| var == "message");
+    let others: Vec<String> = missing
+        .iter()
+        .filter(|var| *var != "message")
+        .cloned()
+        .collect();
+
+    let noun = if missing.len() == 1 {
+        "variable"
+    } else {
+        "variables"
+    };
+    let names = missing
+        .iter()
+        .map(|var| format!("`{var}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let advice = match (has_message, others.is_empty()) {
+        (true, true) => "pass it as the positional argument or `--var message=…`".to_owned(),
+        (true, false) => format!(
+            "pass `message` as the positional argument, and the rest with {}",
+            var_flags(&others)
+        ),
+        (false, _) if missing.len() == 1 => format!("pass it with `--var {}=…`", missing[0]),
+        (false, _) => format!("pass them with {}", var_flags(missing)),
+    };
+
+    CliError::usage(format!(
+        "template `{name}` requires {noun} {names}; {advice}."
+    ))
 }
 
 /// Collect variable values from the positional argument and repeated `--var`.
@@ -490,6 +576,78 @@ mod tests {
         let template = Template::load(&dir, "greet").expect("should load");
         let vars = template.required_variables().expect("should analyse");
         assert_eq!(vars, vec!["message".to_owned()]);
+    }
+
+    #[test]
+    fn a_missing_required_variable_names_the_template_and_the_variable() {
+        // Fix round 1: minijinja's own "undefined value (in error:3)" names
+        // neither, which is what this check exists to replace.
+        let dir = tempdir();
+        std::fs::create_dir_all(dir.join("error")).unwrap();
+        std::fs::write(
+            dir.join("error/template.toml"),
+            "text = \"{{ message }}\"\n",
+        )
+        .unwrap();
+
+        let template = Template::load(&dir, "error").expect("should load");
+        let error = template
+            .check_required_variables(&std::collections::BTreeMap::new())
+            .expect_err("should reject")
+            .to_string();
+        assert!(
+            error.contains("error"),
+            "should name the template, got {error}"
+        );
+        assert!(
+            error.contains("message"),
+            "should name the variable, got {error}"
+        );
+        assert!(
+            error.contains("positional argument"),
+            "message has a positional, so it should be offered, got {error}"
+        );
+    }
+
+    #[test]
+    fn two_missing_required_variables_are_both_named() {
+        let dir = tempdir();
+        std::fs::create_dir_all(dir.join("two")).unwrap();
+        std::fs::write(
+            dir.join("two/template.toml"),
+            "text = \"{{ first }} {{ second }}\"\n",
+        )
+        .unwrap();
+
+        let template = Template::load(&dir, "two").expect("should load");
+        let error = template
+            .check_required_variables(&std::collections::BTreeMap::new())
+            .expect_err("should reject")
+            .to_string();
+        assert!(error.contains("first"), "got {error}");
+        assert!(error.contains("second"), "got {error}");
+        assert!(
+            !error.contains("positional"),
+            "neither variable is `message`, so no positional should be offered, got {error}"
+        );
+    }
+
+    #[test]
+    fn a_supplied_variable_is_not_reported_as_missing() {
+        let dir = tempdir();
+        std::fs::create_dir_all(dir.join("greet")).unwrap();
+        std::fs::write(
+            dir.join("greet/template.toml"),
+            "text = \"{{ message }}\"\n",
+        )
+        .unwrap();
+
+        let template = Template::load(&dir, "greet").expect("should load");
+        let mut vars = std::collections::BTreeMap::new();
+        vars.insert("message".to_owned(), "hi".to_owned());
+        template
+            .check_required_variables(&vars)
+            .expect("all required variables are supplied");
     }
 
     #[test]
