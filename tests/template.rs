@@ -605,6 +605,74 @@ fn quiet_does_not_suppress_template_list_or_show() {
     );
 }
 
+// Fix round 2 (post-review): `template::validate::offline` used to append
+// `crate::validate::bounds_warnings` itself, and `cmd::draw::run` already
+// calls `bounds_warnings` once on every payload it draws, template or not —
+// so a template draw with overflowing text reported the same warning twice.
+// `offline()` no longer produces bounds warnings; `cmd::template::validate`
+// calls `bounds_warnings` directly instead, since it is the one caller that
+// does not go through `cmd::draw::run`.
+
+#[test]
+fn a_template_draw_with_overflowing_text_produces_exactly_one_bounds_warning() {
+    let dir = root("bounds-once");
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args([
+            "--dry-run",
+            "draw",
+            "error",
+            "A message long enough to overflow the panel",
+        ])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let count = stderr.matches("does not fit").count();
+    assert_eq!(
+        count, 1,
+        "expected exactly one bounds warning on a template draw, got {count}: {stderr}"
+    );
+}
+
+#[test]
+fn validate_still_reports_an_out_of_bounds_element() {
+    // Moving the `bounds_warnings` call out of `offline()` and into
+    // `cmd::template::validate` must not silently drop the check that reuse
+    // existed to give `template validate` for free.
+    let dir = std::env::temp_dir().join("busy-tpl-validate-bounds");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("overflow")).expect("temp dir");
+    std::fs::write(
+        dir.join("overflow/template.toml"),
+        "[[elements]]\nid = \"m\"\ntype = \"text\"\ntext = \"A message long enough to \
+         overflow the panel\"\nfont = \"small\"\n",
+    )
+    .expect("write");
+
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["template", "validate", "overflow"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("does not fit"),
+        "template validate must still warn about an out-of-bounds element, got {stderr}"
+    );
+}
+
 #[test]
 fn golden_payload_for_a_rendered_multi_element_template() {
     // Pins that a template really does produce the same wire bytes a

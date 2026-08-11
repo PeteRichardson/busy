@@ -208,7 +208,16 @@ pub fn validate(
         };
         let report = validate::offline(&payload, &template.dir);
 
-        for warning in &report.warnings {
+        // `offline()` no longer calls `crate::validate::bounds_warnings`
+        // itself — every draw path (`cmd::draw::run`) already calls it once
+        // on the final payload, so `offline()` doing it too double-reported
+        // every bounds warning on a template draw. `validate` is the one
+        // caller that does not go through `cmd::draw::run`, so it is the one
+        // that still needs the reuse, and calls it directly here.
+        for warning in crate::validate::bounds_warnings(&payload)
+            .iter()
+            .chain(&report.warnings)
+        {
             emitter.warn(&format!("{name}: {warning}"));
         }
         for error in &report.errors {

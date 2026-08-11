@@ -1,9 +1,18 @@
 //! Offline template checks.
 //!
 //! Nothing here touches the device. Bounds and overflow checking is not
-//! reimplemented: once rendered, a template *is* a `DisplayElements`, so
-//! `crate::validate::bounds_warnings` applies unchanged. That reuse is the
-//! payoff for deserializing into busylib's own types.
+//! reimplemented here — once rendered, a template *is* a `DisplayElements`,
+//! so `crate::validate::bounds_warnings` applies unchanged, and that reuse is
+//! the payoff for deserializing into busylib's own types — but the call
+//! itself does not live in `offline()`. Every draw path (`cmd::draw::run`)
+//! already calls `crate::validate::bounds_warnings` on the final payload
+//! exactly once, template or not; `offline()` used to call it a second time
+//! for the template path specifically, so a template draw reported every
+//! bounds warning twice. `cmd::template::validate` — the caller that
+//! actually needed the reuse, since it never goes through `cmd::draw::run` —
+//! calls `crate::validate::bounds_warnings` itself instead. `offline()`
+//! reports only what is genuinely template-specific: duplicate ids and
+//! missing local assets.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -48,7 +57,10 @@ pub fn referenced_assets(payload: &DisplayElements) -> Vec<String> {
         .collect()
 }
 
-/// Check a rendered template against everything knowable without the device.
+/// Check a rendered template against everything knowable without the device
+/// that is specific to a template — duplicate ids and missing local assets.
+/// Bounds/overflow warnings are deliberately not produced here; see the
+/// module doc comment for why the call moved to `cmd::template::validate`.
 ///
 /// Duplicate ids are reported once per id, naming how many elements share it
 /// — not once per repetition. The brief's reference implementation pushes an
@@ -98,9 +110,6 @@ pub fn offline(payload: &DisplayElements, dir: &Path) -> Report {
         }
     }
 
-    report
-        .warnings
-        .extend(crate::validate::bounds_warnings(payload));
     report
 }
 
@@ -224,10 +233,21 @@ mod tests {
     // comment on `offline` above.
 
     #[test]
-    fn bounds_warnings_come_free_from_the_existing_validator() {
-        // Once rendered, a template IS a DisplayElements, so the payload
-        // validator applies unchanged. This is the payoff for deserializing
-        // into busylib's own type.
+    fn offline_does_not_produce_bounds_warnings_itself() {
+        // `offline` used to call `crate::validate::bounds_warnings` directly
+        // — "come free from the existing validator" — which was correct in
+        // principle (once rendered, a template IS a DisplayElements, so the
+        // payload validator applies unchanged) but wrong in practice: every
+        // draw path (`cmd::draw::run`) *also* calls `bounds_warnings` on the
+        // final payload, so a template draw reported every bounds warning
+        // twice. The call now lives only at `cmd::template::validate`'s call
+        // site — the caller that doesn't go through `cmd::draw::run` and so
+        // still needs it — pinned by
+        // `tests/template.rs::validate_still_reports_an_out_of_bounds_element`
+        // and `tests/replace.rs`/`tests/overrides.rs`'s draw-path bounds
+        // tests, which pin the count stays at one. This test pins the other
+        // half: `offline` alone, with an
+        // out-of-bounds element, must NOT report it.
         let report = offline(
             &payload(
                 r#"
@@ -244,8 +264,8 @@ mod tests {
             Path::new("/nonexistent"),
         );
         assert!(
-            report.warnings.iter().any(|w| w.contains("outside")),
-            "got {:?}",
+            report.warnings.is_empty(),
+            "offline() must not produce bounds warnings itself any more, got {:?}",
             report.warnings
         );
     }
