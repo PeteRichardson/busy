@@ -1,6 +1,7 @@
 # busy
 
-An ergonomic CLI for the [BUSY Bar](https://busy.app).
+An ergonomic CLI for the [BUSY Bar](https://busy.app) , built on
+[`busylib`](https://github.com/foresterre/busybar-rust) by [@foresterre](https://github.com/foresterre).
 
 ```sh
 busy text "Hello, World!"
@@ -79,8 +80,13 @@ stays out of your shell history and out of `ps`.
   `--` just stops clap from treating it as a flag); a bare `-` after `--`
   still reads stdin rather than producing a literal `-`.
 
-## Prior art
+## Acknowledgements
 
-[`busybar-rust`](https://github.com/foresterre/busybar-rust) provides `busylib`,
-which this tool is built on, and a `busybar` CLI that mirrors the API 1:1. For
-frame capture and screen mirroring, use that.
+`busy` is a thin ergonomic layer over
+[`busylib`](https://github.com/foresterre/busybar-rust) by
+[@foresterre](https://github.com/foresterre). It does the real work of talking
+to the bar — this project is mostly argument parsing and opinions on top of it.
+
+The same repo ships a `busybar` CLI that mirrors the HTTP API 1:1. If you want
+frame capture or screen mirroring, or you'd rather have the full API surface
+than defaults chosen for you, use that instead.
