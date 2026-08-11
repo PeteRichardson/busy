@@ -50,7 +50,8 @@ busy draw error "Build failed" --var code=500
   ├─ render::analyse(source)            → required variables; rejects include/import/extends
   ├─ bind(positional, --var)            → error on a missing variable, or on both message forms
   ├─ render::render(source, vars)       → TOML text, every substitution auto-escaped
-  ├─ toml::from_str::<DisplayElements>  → the payload
+  ├─ toml::from_str::<TemplateFile>     → description + elements (§2.1)
+  ├─ TemplateFile::into_payload(app)    → DisplayElements
   ├─ validate::offline(&payload, dir)   → duplicate ids, missing local asset files
   ├─ overrides::apply(payload, args, Kind::Template)
   ├─ asset presence check               → one storage/list; error naming the upload command
@@ -61,19 +62,58 @@ Everything above the asset-presence check is offline and pure. `--dry-run` there
 exercises the entire interesting part of the phase without a device, which is what makes this
 phase testable.
 
-**The key inherited move, unchanged:** a template deserializes *directly* into
-`busylib::model::assets::DisplayElements`. The template file **is** the API payload. That is
-what makes `animation`, `rectangle`, and `countdown` elements reachable without this project
-modelling them, and it is why the pipeline ends by joining the path `--file` already uses.
+### 2.1 A template is `DisplayElements` minus the app name, plus a description
+
+The architecture doc says a template deserializes *directly* into
+`busylib::model::assets::DisplayElements`. **Measured: it cannot, and the gap is one field.**
+
+`DisplayElements::application_name` is required and has no default, so the architecture doc's
+own example `template.toml` fails to parse with `missing field 'application_name'` — verified
+against busylib 0.0.11. That field must not appear in a template anyway: which app owns the
+draw comes from `--app`, `BUSY_APP`, or the config file, and a template hard-coding it would
+defeat the whole precedence chain.
+
+The doc's example also opens with `description = "..."`, which `DisplayElements` has no field
+for. It has no `deny_unknown_fields`, so that line parses and is *silently discarded* —
+leaving `template list` and `template show` with nothing to print.
+
+So a template parses into a thin wrapper:
+
+```rust
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TemplateFile {
+    pub description: Option<String>,
+    pub priority: Option<Priority>,
+    pub led_notification_color: Option<Color>,
+    pub elements: Vec<DisplayElement>,
+}
+```
+
+`into_payload(app)` then builds the real `DisplayElements`. `deny_unknown_fields` is the point
+of doing it by hand: a typo'd key in a template becomes an error naming the key, rather than a
+field silently ignored.
+
+**The part of the inherited claim that matters survives intact.** `elements` is
+`Vec<DisplayElement>` — busylib's own type — so `animation`, `rectangle`, and `countdown`
+elements still come along free without this project modelling them. Verified end to end: a
+template declaring a `rectangle` with `width`/`height` parses and serializes to exactly the
+expected wire JSON, with no code here naming a rectangle. That is the whole reason for the
+design, and only the envelope changed.
 
 ---
 
 ## 3. Components
 
 ```
+templates/            # NEW — the shipped examples, embedded at compile time (§3.5)
+├── error/
+│   └── template.toml
+└── ok/
+    └── template.toml
 src/
 ├── template/
-│   ├── mod.rs        # NEW — Template, load(), the pipeline above
+│   ├── mod.rs        # NEW — TemplateFile, Template, load(), the pipeline above
 │   ├── discover.rs   # NEW — root resolution, list(), suggest()
 │   ├── render.rs     # NEW — the only module naming `minijinja`
 │   └── validate.rs   # NEW — offline checks
@@ -155,7 +195,33 @@ the existing `validate::bounds_warnings` applies unchanged. `template validate` 
 reports its warnings alongside the hard errors above. This is the payoff for the inherited
 decision to deserialize into the API type.
 
-### 3.4 `overrides.rs`
+### 3.4 The shipped examples are a directory, not a code table
+
+**Adding an example template must be a commit, not a code change.** `templates/` at the repo
+root holds them in exactly the installed layout — `templates/<name>/template.toml`, plus any
+files the template carries — and the whole tree is embedded at compile time:
+
+```rust
+static EXAMPLES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates");
+```
+
+`include_dir` 0.7 pulls in one macro crate and nothing else, and needs no default features.
+The alternative — an `include_str!` per file — requires editing Rust to add a template, which
+is precisely what this is avoiding.
+
+`init` walks `EXAMPLES.dirs()`, skipping any directory without a `template.toml` (the same
+rule `discover.rs` applies to the installed root), and writes every file in each. Embedding
+whole directories rather than single files means a template that ships a PNG works without
+change when 4b lands.
+
+**The guard that makes this safe is a test, not review.** `tests/examples.rs` iterates every
+embedded template and runs the full offline pipeline on it: render with each required variable
+bound to a placeholder, parse, and validate. Committing a template with a TOML typo, a
+duplicate element id, or a reference to a file that isn't there fails the suite. Without that
+test, "just commit a new one" means shipping unvalidated content to every user who runs
+`template init`.
+
+### 3.5 `overrides.rs`
 
 ```rust
 pub enum Kind { Text, Image, Stock, Template, File }
@@ -264,14 +330,24 @@ it reports the near-match from `suggest()` rather than failing later as a doomed
 
 ### 5.3 `template init`
 
-Creates the template root and writes `error` and `ok`. Refuses to overwrite an existing
-template directory unless `--force`, and reports what it wrote.
+Creates the template root and writes every example embedded from `templates/` (§3.4). An
+existing template directory is **skipped, not overwritten**, unless `--force`. Reports each
+name as written or skipped, so the outcome is never a silent no-op.
+
+**Skip-by-default gives the maintenance workflow for free.** Commit a new template to
+`templates/`, and a user who re-runs `busy template init` after upgrading gets exactly the new
+one — their edits to `error` are left alone, because `error` already exists. No name filter,
+no `--only`, no merge logic. `--force` exists for the other case: restoring a shipped example
+someone has broken.
 
 The examples are the documentation — they are how a user learns the format — so they are
-commented and deliberately cover both interesting cases: `error` is text plus a `shared/`
-stock icon and a required `message` variable; `ok` is text with an optional one.
+commented, and the initial two cover both interesting cases: `error` is text plus a `shared/`
+stock icon with a **required** `message` variable; `ok` is text with an **optional** one via
+`{{ message | default("Done") }}`.
 
-Neither shipped example carries a local PNG, so both work in 4a without asset sync.
+Neither carries a local PNG, so both work in 4a without asset sync. That is a property of
+these two, not a rule — §3.4's embedding handles a template with assets, and such a template
+would simply hit §6's presence check until 4b lands.
 
 ---
 
@@ -338,8 +414,14 @@ The unit tests carry the weight, because the whole pipeline up to the presence c
   one.
 - **`template/validate.rs`:** duplicate ids; a missing local asset file; non-ASCII text.
 - **`overrides.rs`:** every cell of the §4 table — this is the one place a table is the test.
-- **`tests/template.rs`:** the five subcommands, `init --force`, and resolution rule 2
-  including `--as` and the second-positional guard.
+- **`tests/template.rs`:** the five subcommands, `init` skipping an existing directory and
+  `--force` overwriting it, and resolution rule 2 including `--as` and the
+  second-positional guard.
+- **`tests/examples.rs`:** every template embedded from `templates/`, run through the full
+  offline pipeline — render with each required variable bound to a placeholder, parse,
+  validate. This is the guard that makes "adding an example is just a commit" safe, and it
+  must iterate the embedded set rather than naming `error` and `ok`, or it stops covering
+  the next template added.
 - **Golden snapshot** of a rendered multi-element template payload via `--dry-run`, pinning
   that a template really does produce the same wire bytes a hand-written payload would.
 - **wiremock** for the presence check, including the degradation path.
@@ -360,6 +442,13 @@ them into the source documents.
 2. **Command-surface §3.3** calls for `draw` to accept the union of every arg group.
    Corrected by §4.3: `draw` gains `--var` only, because the rest would be permanently
    inapplicable.
+3. **Architecture doc §7** states a template deserializes directly into `DisplayElements`.
+   Corrected by §2.1, and this one is a measurement rather than a judgment: the doc's own
+   example template fails to parse, because `application_name` is required and templates must
+   not carry it. A `TemplateFile` wrapper supplies the envelope and captures the
+   `description` field the doc uses but `DisplayElements` silently discards. The claim that
+   matters — `rectangle`, `countdown`, and `animation` for free — is unaffected and was
+   verified end to end.
 
 ---
 
@@ -392,6 +481,13 @@ attacker-controlled input can still produce arbitrary TOML. Accepted: templates 
 local files the user wrote, `| safe` is opt-in and documented as unsafe, and the alternative
 (parse first, substitute into strings only) forfeits variables in numeric fields, which both
 inherited specs assume.
+
+**Embedded examples grow the binary and can rot silently.** Every file under `templates/`
+ships in every binary, so a large PNG committed there is paid for by every user. Text
+templates are a few hundred bytes each and this is not a concern at the current scale; revisit
+if an example ever carries a real image. The rot risk — a committed template that no longer
+renders — is what `tests/examples.rs` (§8) exists to prevent, and that test is load-bearing
+rather than a nicety.
 
 **`undeclared_variables` is static analysis and can over-report.** A variable referenced only
 inside a `{% if false %}` branch is still reported as required. Acceptable — it errs toward
