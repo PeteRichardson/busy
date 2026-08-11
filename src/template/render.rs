@@ -31,7 +31,9 @@ fn escape(value: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                out.push_str(&format!("\\u{:04x}", c as u32))
+            }
             c => out.push(c),
         }
     }
@@ -54,18 +56,52 @@ fn environment() -> Environment<'static> {
     env
 }
 
+/// The tag name that immediately follows an occurrence of `{%` in `after_open`
+/// (the source slice starting right after the `{%`), if it is one of
+/// `FORBIDDEN`.
+///
+/// Mirrors `minijinja`'s own tokenizer exactly (see
+/// `compiler/lexer.rs::matches_marker`'s `skip_ws_control` handling): a `{%`
+/// may be followed by a single optional `-` or `+` whitespace-control marker,
+/// then any run of ASCII whitespace, before the tag name. A plain substring
+/// search for `"{% include"` / `"{%include"` misses `{%- include`, `{%   include`,
+/// `{%\tinclude`, `{%+ include`, and any other combination minijinja accepts
+/// and executes — matching the lexer's own rule is exact where enumerating
+/// spellings can never be complete.
+fn matched_forbidden_keyword(after_open: &str) -> Option<&'static str> {
+    let s = after_open
+        .strip_prefix(['-', '+'])
+        .unwrap_or(after_open)
+        .trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let ident_len = s
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(s.len());
+    let ident = &s[..ident_len];
+    FORBIDDEN.iter().copied().find(|&keyword| keyword == ident)
+}
+
 /// Refuse the constructs `undeclared_variables` cannot see through.
+///
+/// This scans raw text for `{%`, so a template whose *content* legitimately
+/// contains a string like `{% include` (documentation about templates,
+/// say) is refused too, even though nothing would actually be parsed as a
+/// tag there. That false positive was considered and accepted: refusing is
+/// safe, and the error message explains why, whereas the alternative (only
+/// matching text minijinja would actually tokenize as a tag) would need to
+/// duplicate escaping/comment/string-literal handling from the lexer for a
+/// case that is rare in TOML template bodies.
 fn reject_forbidden(name: &str, source: &str) -> Result<(), CliError> {
-    for keyword in FORBIDDEN {
-        let needle = format!("{{% {keyword}");
-        let compact = format!("{{%{keyword}");
-        if source.contains(&needle) || source.contains(&compact) {
+    let mut rest = source;
+    while let Some(tag_pos) = rest.find("{%") {
+        let after_open = &rest[tag_pos + 2..];
+        if let Some(keyword) = matched_forbidden_keyword(after_open) {
             return Err(CliError::usage(format!(
                 "template `{name}` uses `{{% {keyword} %}}`, which is not supported: \
                  templates must be self-contained single files, because the analysis \
                  that reports a template's required variables cannot see through it."
             )));
         }
+        rest = after_open;
     }
     Ok(())
 }
@@ -182,6 +218,21 @@ mod tests {
     }
 
     #[test]
+    fn del_is_escaped() {
+        // TOML requires U+007F (DEL) to be escaped in a basic string, same as
+        // the other control characters; it sits just above the 0x00..=0x1F
+        // range a naive `< 0x20` guard covers.
+        let out = render(
+            "t",
+            r#"text = "{{ message }}""#,
+            &vars(&[("message", "a\u{7f}b")]),
+        )
+        .expect("should render");
+        assert_eq!(out, "text = \"a\\u007fb\"");
+        toml::from_str::<toml::Value>(&out).expect("must be valid TOML");
+    }
+
+    #[test]
     fn a_numeric_field_passes_through_untouched() {
         // Escaping must not quote or alter a value used in a non-string
         // field, or `x = {{ pos }}` stops working.
@@ -235,6 +286,31 @@ x = {{ pos }}"#,
             "{% import 'x.toml' as x %}",
             "{% from 'x.toml' import y %}",
             "{% extends 'base.toml' %}",
+        ] {
+            let error = analyse("t", bad)
+                .expect_err(&format!("{bad} should be rejected"))
+                .to_string();
+            assert!(
+                error.contains("self-contained"),
+                "should explain why, got {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn inheritance_constructs_are_rejected_regardless_of_whitespace() {
+        // minijinja's lexer accepts an optional single `-`/`+` whitespace-
+        // control marker right after `{%`, then any run of ASCII whitespace,
+        // before the tag name — see lexer.rs's `skip_ws_control` handling.
+        // A substring scan for literal `"{% include"`/`"{%include"` misses
+        // every other spelling minijinja actually executes.
+        for bad in [
+            "{% include 'other.toml' %}",
+            "{%include 'other.toml' %}",
+            "{%- include 'other.toml' %}",
+            "{%   include 'other.toml' %}",
+            "{%\tinclude 'other.toml' %}",
+            "{%+ include 'other.toml' %}",
         ] {
             let error = analyse("t", bad)
                 .expect_err(&format!("{bad} should be rejected"))
