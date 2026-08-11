@@ -104,7 +104,10 @@ impl Template {
                 };
                 CliError::usage(format!("no template named `{name}`.{hint}"))
             } else {
-                CliError::usage(format!("could not read {}: {error}", path.display()))
+                // The template exists but reading it failed — permissions, a
+                // broken symlink, an I/O error. That is not the user getting
+                // the command wrong, so it must not exit like a usage error.
+                CliError::runtime(format!("could not read {}: {error}", path.display()))
             }
         })?;
 
@@ -162,11 +165,12 @@ pub fn bind_variables(
                 "`--var {pair}` is not in `k=v` form; write `--var {pair}=<value>`."
             )));
         };
-        if key.is_empty() {
-            return Err(CliError::usage(format!(
-                "`--var {pair}` has an empty variable name."
-            )));
-        }
+        validate_var_key(key)?;
+        // An empty value (`k=`) is left alone: `--var note=` is a legitimate
+        // way to bind an empty string. A key supplied more than once takes
+        // its last value here — the conventional shell-flag behaviour — as
+        // opposed to the positional/`message` collision below, which errors
+        // instead of picking a winner.
         vars.insert(key.to_owned(), value.to_owned());
     }
 
@@ -183,9 +187,29 @@ pub fn bind_variables(
     Ok(vars)
 }
 
+/// Reject a `--var` key that no template could ever reference. minijinja
+/// variables are identifiers: ASCII letters, digits, or underscore, and not
+/// starting with a digit. `9x`, `a-b`, and a key with leading or trailing
+/// whitespace would all otherwise parse, bind, and then silently do nothing
+/// — the user's typo would vanish instead of erroring. Nothing here is
+/// trimmed: whitespace in a key is a mistake, not something to fix on the
+/// user's behalf.
+fn validate_var_key(key: &str) -> Result<(), CliError> {
+    let mut chars = key.chars();
+    let starts_ok = matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_');
+    let rest_ok = chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if starts_ok && rest_ok {
+        return Ok(());
+    }
+    Err(CliError::usage(format!(
+        "`{key}` is not a usable variable name: use ASCII letters, digits, or \
+         underscore, and do not start with a digit."
+    )))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Template, TemplateFile, bind_variables};
+    use super::{CliError, Template, TemplateFile, bind_variables};
 
     #[test]
     fn a_template_file_becomes_a_payload_with_the_app_name_supplied() {
@@ -276,6 +300,33 @@ mod tests {
     }
 
     #[test]
+    fn a_key_that_is_not_a_valid_identifier_is_rejected() {
+        // minijinja variables are identifiers; a key that can never match one
+        // would silently do nothing instead of erroring, hiding a typo.
+        for bad in ["9x=1", "a-b=1", " a=1", "a b=1", "a =1"] {
+            let error = bind_variables(None, &[bad.to_owned()])
+                .expect_err(&format!("{bad:?} should be rejected"))
+                .to_string();
+            assert!(error.contains("not a usable variable name"), "got {error}");
+        }
+    }
+
+    #[test]
+    fn an_empty_value_is_accepted() {
+        // `--var note=` legitimately binds an empty string.
+        let bound = bind_variables(None, &["note=".to_owned()]).expect("should bind");
+        assert_eq!(bound.get("note").map(String::as_str), Some(""));
+    }
+
+    #[test]
+    fn a_repeated_key_takes_the_last_value() {
+        // The conventional shell-flag behaviour: last one wins, no error.
+        let bound =
+            bind_variables(None, &["code=1".to_owned(), "code=2".to_owned()]).expect("should bind");
+        assert_eq!(bound.get("code").map(String::as_str), Some("2"));
+    }
+
+    #[test]
     fn led_notification_color_round_trips_into_the_payload() {
         // Not verified by the brief's author — checked here rather than
         // assumed. `Color` deserializes from a plain string via
@@ -321,20 +372,63 @@ mod tests {
         std::fs::create_dir_all(dir.join("error")).unwrap();
         std::fs::write(dir.join("error/template.toml"), "elements = []").unwrap();
 
-        let error = Template::load(&dir, "eror")
-            .expect_err("should fail")
-            .to_string();
-        assert!(error.contains("eror"), "got {error}");
-        assert!(error.contains("error"), "should suggest, got {error}");
+        let error = Template::load(&dir, "eror").expect_err("should fail");
+        assert!(
+            matches!(error, CliError::Usage(_)),
+            "a missing template is a usage error, got {error:?}"
+        );
+        let message = error.to_string();
+        assert!(message.contains("eror"), "got {message}");
+        assert!(message.contains("error"), "should suggest, got {message}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_unreadable_template_is_a_runtime_error_not_a_usage_error() {
+        // Prerequisite P2 on this branch existed to stop runtime failures
+        // (I/O errors, permissions) from being mislabelled as usage errors;
+        // an unreadable-but-present file is exactly that case, distinct from
+        // `NotFound`, which genuinely is a usage error (the user asked for a
+        // template that is not there).
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempdir();
+        std::fs::create_dir_all(dir.join("locked")).unwrap();
+        let path = dir.join("locked/template.toml");
+        std::fs::write(&path, "elements = []").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = Template::load(&dir, "locked");
+
+        // Restore permissions unconditionally so the temp dir cleans up (and
+        // so a failed assertion below doesn't leave an unreadable file
+        // behind for the next run to trip over).
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let error = result.expect_err("should fail to read");
+        assert!(
+            matches!(error, CliError::Runtime(_)),
+            "an unreadable file is a runtime failure, not a usage error; got {error:?}"
+        );
     }
 
     #[test]
     fn loading_an_invalid_name_is_rejected_before_touching_disk() {
+        // Asserting only on `../escape` appearing in the message does not
+        // discriminate: a `NotFound` read of `root/../escape/template.toml`
+        // would produce "no template named `../escape`...", which contains
+        // the same substring. Assert on wording only `validate_name`
+        // produces, so deleting the `validate_name` call in `Template::load`
+        // makes this test fail rather than pass for the wrong reason —
+        // verified by removing that call and re-running this test alone.
         let dir = tempdir();
         let error = Template::load(&dir, "../escape")
             .expect_err("should fail")
             .to_string();
-        assert!(error.contains("../escape"), "got {error}");
+        assert!(
+            error.contains("not a usable template name"),
+            "should come from validate_name, got {error}"
+        );
     }
 
     #[test]
