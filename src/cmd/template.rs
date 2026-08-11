@@ -28,30 +28,54 @@ pub fn root(flag: Option<&std::path::Path>) -> Result<std::path::PathBuf, CliErr
 
 pub fn list(root: &std::path::Path, emitter: &Emitter) -> Result<(), CliError> {
     let names = discover::list(root);
-    if names.is_empty() {
-        return emitter.success(
+
+    // One pass gathering (name, description) pairs, then both the human
+    // report and the `--json` array are built from it — reading each
+    // template's description only once, not once per output format.
+    let entries: Vec<(String, String)> = names
+        .iter()
+        .map(|name| {
+            let description = Template::load(root, name)
+                .ok()
+                .and_then(|template| {
+                    toml::from_str::<crate::template::TemplateFile>(&template.source)
+                        .ok()
+                        .and_then(|file| file.description)
+                })
+                .unwrap_or_default();
+            (name.clone(), description)
+        })
+        .collect();
+
+    // `{name, description}` objects, addressable individually, rather than
+    // folding the listing into one formatted blob under `--json` — the
+    // defect `success_items` (nee `success_list`, generalized for this)
+    // exists to prevent. See its doc comment.
+    let templates: Vec<serde_json::Value> = entries
+        .iter()
+        .map(|(name, description)| serde_json::json!({ "name": name, "description": description }))
+        .collect();
+    let json_summary = format!("{} template(s)", entries.len());
+
+    if entries.is_empty() {
+        return emitter.success_items(
             &format!(
                 "no templates in {}; run `busy template init` to write the examples",
                 root.display()
             ),
-            None,
+            &json_summary,
+            "templates",
+            templates,
+            true,
         );
     }
 
     let mut report = String::new();
-    for name in &names {
-        let description = Template::load(root, name)
-            .ok()
-            .and_then(|template| {
-                toml::from_str::<crate::template::TemplateFile>(&template.source)
-                    .ok()
-                    .and_then(|file| file.description)
-            })
-            .unwrap_or_default();
+    for (name, description) in &entries {
         report.push_str(&format!("{name}\t{description}\n"));
     }
-    report.push_str(&format!("{} template(s)", names.len()));
-    emitter.success(&report, None)
+    report.push_str(&format!("{} template(s)", entries.len()));
+    emitter.success_items(&report, &json_summary, "templates", templates, true)
 }
 
 pub fn show(
@@ -81,7 +105,22 @@ pub fn show(
         ));
     }
     report.push_str(&format!("  {}", template.dir.display()));
-    emitter.success(&report, None)
+
+    // Structured fields under `--json` — `name`, `description`, `elements`
+    // (a count), `variables` (an array), `path` — rather than the human
+    // report's formatted lines folded into one string. The human text above
+    // is unchanged either way.
+    emitter.success_fields(
+        &report,
+        serde_json::json!({
+            "name": args.name,
+            "description": file.description,
+            "elements": file.elements.len(),
+            "variables": variables,
+            "path": template.dir.display().to_string(),
+        }),
+        true,
+    )
 }
 
 pub fn validate(

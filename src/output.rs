@@ -88,59 +88,87 @@ impl Emitter {
 
     /// Report success for a listing whose items a machine consumer needs
     /// individually addressable rather than folded into one formatted blob.
-    /// `summary` is the human-facing text printed as-is without `--json`
-    /// (a `name\tsize` block followed by a count line, or a one-line "no
-    /// assets" message); under `--json` that text is dropped in favour of an
-    /// `"assets"` array of `{name, size, type}` objects — present, and `[]`
-    /// when empty, on every call so a consumer can always iterate it rather
-    /// than branching on whether the key exists — so a script never has to
-    /// re-parse tabs and newlines out of a JSON string to get at the data.
-    /// `type` is `"file"` or `"dir"`, spelled out explicitly rather than left
-    /// for a consumer to infer from a trailing slash on `name`, which the
-    /// human-facing `summary` does use. `size` is `null` for a directory.
-    /// This is the same class of "technically valid but useless" JSON that
+    /// `human` is the human-facing text printed as-is without `--json` (a
+    /// `name\tsize` block followed by a count line, or a one-line "no
+    /// assets" message); under `--json` that text is dropped in favour of a
+    /// `key`-named array of `items` — present, and `[]` when empty, on every
+    /// call so a consumer can always iterate it rather than branching on
+    /// whether the key exists — so a script never has to re-parse tabs and
+    /// newlines out of a JSON string to get at the data. This is the same
+    /// class of "technically valid but useless" JSON that
     /// warnings-during-success produced before they were buffered (see
     /// `warn_always`).
     ///
-    /// Unlike `success`, this is data the caller asked for, not commentary
-    /// about the run — so `--quiet` (whose own help text is "Suppress
-    /// warnings") must not silence it. `emit` is called with
-    /// `respect_quiet: false` accordingly; `--json` is unaffected either way,
-    /// since `--quiet` never suppresses JSON output.
-    pub fn success_list(
+    /// Generalized from what was a hardcoded `asset list` shape (an
+    /// `"assets"` array of `{name, size, type}` tuples baked into `Emitter`
+    /// itself — `Emitter` had no business knowing what an asset is,
+    /// PROJECT_REVIEW.md finding F17) once `template list` needed the same
+    /// "addressable items, not a blob" contract for a different shape of
+    /// item. `key` lets each caller name its own array (`"assets"`,
+    /// `"templates"`, …) and build its own item objects; `Emitter` no longer
+    /// knows what a listing's rows mean.
+    ///
+    /// `respect_quiet` mirrors `success`'s own flag, exposed here because the
+    /// two current callers disagree: `asset list`'s data *is* the answer to
+    /// the question asked, not commentary about the run, so `--quiet`
+    /// (help text "Suppress warnings") must not silence it — `false`.
+    /// `template list` predates this generalization with the opposite,
+    /// `success`-derived behaviour and keeps it unchanged here rather than
+    /// silently picking up a new quiet-suppression contract as a side effect
+    /// of this refactor — `true`. `--json` is unaffected either way, since
+    /// `--quiet` never suppresses JSON output.
+    pub fn success_items(
         &self,
+        human: &str,
         summary: &str,
-        items: &[(String, Option<u64>, bool)],
+        key: &str,
+        items: Vec<serde_json::Value>,
+        respect_quiet: bool,
     ) -> Result<(), CliError> {
-        let assets: Vec<_> = items
-            .iter()
-            .map(|(name, size, is_dir)| {
-                serde_json::json!({
-                    "name": name,
-                    "size": size,
-                    "type": if *is_dir { "dir" } else { "file" },
-                })
-            })
-            .collect();
         let body = serde_json::json!({
             "ok": true,
-            "summary": format!("{} asset(s)", items.len()),
-            "assets": assets,
+            "summary": summary,
+            key: items,
         });
-        self.emit(summary, body, false)
+        self.emit(human, body, respect_quiet)
+    }
+
+    /// Report success for a single item whose fields a machine consumer
+    /// needs individually addressable — `success_items`'s singular
+    /// counterpart, for a command that describes one thing (`template show`)
+    /// rather than listing several. `fields` must be a JSON object; its keys
+    /// are merged directly into the response body alongside `"ok": true`, so
+    /// the caller controls its own shape the same way `success_items`' `key`
+    /// does for a list. `respect_quiet` has the same meaning as on
+    /// `success_items`.
+    pub fn success_fields(
+        &self,
+        human: &str,
+        fields: serde_json::Value,
+        respect_quiet: bool,
+    ) -> Result<(), CliError> {
+        let mut body = serde_json::json!({ "ok": true });
+        if let serde_json::Value::Object(map) = fields {
+            for (key, value) in map {
+                body[key] = value;
+            }
+        }
+        self.emit(human, body, respect_quiet)
     }
 
     /// Shared tail of every success path: attach any buffered warnings, then
     /// print `body` as pretty JSON under `--json` or `human` otherwise.
     /// `respect_quiet` governs only the human branch: `true` (used by
-    /// `success`) suppresses it under `--quiet`, matching the flag's role as
-    /// silencing commentary; `false` (used by `success_list`) always prints
-    /// it, because a listing's body is the answer to the question the user
-    /// asked, not chatter about the run. `--json --quiet` always prints the
-    /// JSON document either way, matching `failure` and `dry_run`, which are
-    /// never suppressed by `--quiet`. Keeping this logic in one place is what
-    /// stops `success` and `success_list` from drifting apart the way the
-    /// pre-buffering `--json`/warning interaction once did.
+    /// `success`, and by callers of `success_items`/`success_fields` that
+    /// want the same behaviour) suppresses it under `--quiet`, matching the
+    /// flag's role as silencing commentary; `false` (used by `asset list` via
+    /// `success_items`) always prints it, because a listing's body is the
+    /// answer to the question the user asked, not chatter about the run.
+    /// `--json --quiet` always prints the JSON document either way, matching
+    /// `failure` and `dry_run`, which are never suppressed by `--quiet`.
+    /// Keeping this logic in one place is what stops every success path from
+    /// drifting apart the way the pre-buffering `--json`/warning interaction
+    /// once did.
     fn emit(
         &self,
         human: &str,

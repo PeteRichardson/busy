@@ -28,8 +28,29 @@ pub async fn list(settings: &Settings, emitter: &Emitter) -> Result<(), CliError
         .collect();
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
+    // `type` is `"file"` or `"dir"`, spelled out explicitly rather than left
+    // for a consumer to infer from a trailing slash on `name`, which the
+    // human-facing report does use. `size` is `null` for a directory.
+    let assets: Vec<serde_json::Value> = files
+        .iter()
+        .map(|(name, size, is_dir)| {
+            serde_json::json!({
+                "name": name,
+                "size": size,
+                "type": if *is_dir { "dir" } else { "file" },
+            })
+        })
+        .collect();
+    let json_summary = format!("{} asset(s)", files.len());
+
     if files.is_empty() {
-        return emitter.success_list(&format!("no assets for `{}`", settings.app), &files);
+        return emitter.success_items(
+            &format!("no assets for `{}`", settings.app),
+            &json_summary,
+            "assets",
+            assets,
+            false,
+        );
     }
 
     let mut report = String::new();
@@ -42,7 +63,7 @@ pub async fn list(settings: &Settings, emitter: &Emitter) -> Result<(), CliError
     }
     report.push_str(&format!("{} asset(s)", files.len()));
 
-    emitter.success_list(&report, &files)
+    emitter.success_items(&report, &json_summary, "assets", assets, false)
 }
 
 /// Convert a local image to a panel-sized PNG and upload it.

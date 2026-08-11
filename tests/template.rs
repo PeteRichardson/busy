@@ -168,3 +168,110 @@ fn a_literal_smart_quote_in_the_template_text_still_hard_fails_naming_the_templa
         "should name the template, got {stderr}"
     );
 }
+
+/// Fix round 1: `template list --json` used to fold the listing into a
+/// pre-formatted `summary` string (a `name\tdescription\n...` blob), the
+/// same defect `asset list --json` had before `Emitter::success_list` (now
+/// generalized to `success_items`) replaced it with an addressable array.
+/// Parses the emitted JSON and asserts on structure, not a substring of the
+/// blob, since substring-matching the old shape (`stdout.contains("error")`,
+/// `stdout.contains("Red error text")`, in
+/// `list_names_every_template_with_its_description` above) is exactly what
+/// let that shape through unnoticed.
+#[test]
+fn list_json_carries_an_addressable_templates_array() {
+    let dir = root("json-list");
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["--json", "template", "list"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid json");
+    let templates = value["templates"]
+        .as_array()
+        .expect("templates array present");
+    assert_eq!(templates.len(), 2);
+
+    let error = templates
+        .iter()
+        .find(|entry| entry["name"] == "error")
+        .expect("the `error` template should be listed");
+    assert_eq!(error["description"], "Red error text");
+
+    let plain = templates
+        .iter()
+        .find(|entry| entry["name"] == "plain")
+        .expect("the `plain` template should be listed");
+    assert_eq!(plain["description"], "No variables");
+}
+
+/// `template list --json` against an empty root still carries the `templates`
+/// key, `[]` rather than absent — the same "always present" contract
+/// `asset list --json` gives `assets`, so a consumer never has to branch on
+/// whether the key exists.
+#[test]
+fn list_json_carries_an_empty_templates_array_when_there_is_nothing() {
+    let dir = std::env::temp_dir().join("busy-tpl-json-list-empty");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["--json", "template", "list"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid json");
+    assert_eq!(
+        value["templates"],
+        serde_json::json!([]),
+        "the templates key must be present and empty, not absent, got {value}"
+    );
+}
+
+/// `template show --json` used to fold everything into one `summary` blob
+/// too. Now it must carry structured fields a consumer can address directly.
+#[test]
+fn show_json_carries_structured_fields() {
+    let dir = root("json-show");
+    let output = busy()
+        .args(["--template-dir"])
+        .arg(&dir)
+        .args(["--json", "template", "show", "error"])
+        .output()
+        .expect("should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).expect("valid json");
+    assert_eq!(value["name"], "error");
+    assert_eq!(value["description"], "Red error text");
+    assert_eq!(value["elements"], 1);
+    let variables = value["variables"]
+        .as_array()
+        .expect("variables should be an array");
+    assert_eq!(variables, &vec![serde_json::json!("message")]);
+    assert!(
+        value["path"]
+            .as_str()
+            .expect("path should be a string")
+            .contains("error"),
+        "got {value}"
+    );
+}
