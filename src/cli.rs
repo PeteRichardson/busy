@@ -114,6 +114,10 @@ pub struct GlobalArgs {
     #[arg(long, global = true)]
     pub http_timeout: Option<u64>,
 
+    /// Directory holding template directories (default ~/.config/busy/templates)
+    #[arg(long, global = true)]
+    pub template_dir: Option<PathBuf>,
+
     /// Emit machine-readable JSON
     #[arg(short, long, global = true)]
     pub json: bool,

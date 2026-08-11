@@ -8,6 +8,7 @@ mod image;
 mod input;
 mod output;
 mod sanitize;
+mod template;
 mod validate;
 
 use clap::Parser;
