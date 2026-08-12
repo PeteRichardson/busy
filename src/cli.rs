@@ -100,6 +100,14 @@ pub struct DrawCommon {
     #[arg(long = "var", value_name = "KEY=VALUE")]
     pub vars: Vec<String>,
 
+    /// Replay a `.anim` animation instead of stopping on its last frame
+    #[arg(long = "loop")]
+    pub repeat: bool,
+
+    /// Named range of frames to play from a `.anim`, instead of all of them
+    #[arg(long, value_name = "NAME")]
+    pub section: Option<String>,
+
     /// Optional message; binds to the `message` template variable. Use `-` to
     /// read it from stdin.
     pub message: Option<String>,

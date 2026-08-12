@@ -18,6 +18,10 @@ use crate::error::CliError;
 pub enum Kind {
     Image,
     Stock,
+    /// A `.anim`, whether from this app's assets or from `shared/…`. Built
+    /// from flags exactly as an image is, but it is the only kind that can
+    /// honour `--loop` and `--section`.
+    Animation,
     Template,
     File,
 }
@@ -32,6 +36,7 @@ impl Kind {
     fn describe(self) -> &'static str {
         match self {
             Kind::Image | Kind::Stock => "an image draw",
+            Kind::Animation => "an animation draw",
             Kind::Template => "a template",
             Kind::File => "a --file payload",
         }
@@ -78,6 +83,44 @@ pub fn apply(
     }
 
     Ok(payload)
+}
+
+/// `--loop` and `--section` only mean something for an animation.
+///
+/// A template or a payload file may well contain animation elements, but each
+/// carries its own `loop` and `section`, and the flag cannot say which element
+/// it meant — the same reason the per-element flags above are refused there.
+pub fn reject_animation_flags_unless_animation(
+    args: &DrawArgs,
+    kind: Kind,
+) -> Result<(), CliError> {
+    if kind == Kind::Animation {
+        return Ok(());
+    }
+
+    let flags = [
+        ("--loop", args.common.repeat),
+        ("--section", args.common.section.is_some()),
+    ];
+
+    for (flag, given) in flags {
+        if !given {
+            continue;
+        }
+        let advice = match kind {
+            Kind::Template | Kind::File => {
+                "an animation element inside it carries its own, and this cannot say \
+                 which element it meant."
+            }
+            _ => "only a `.anim` animation has frames to play.",
+        };
+        return Err(CliError::usage(format!(
+            "{flag} cannot be used with {}: {advice}",
+            kind.describe()
+        )));
+    }
+
+    Ok(())
 }
 
 /// `--var` only means something for a template.

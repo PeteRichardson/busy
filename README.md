@@ -15,6 +15,10 @@ busy draw logo.png                 # draw it
 busy draw shared/checkmark_front_8x8.image
 busy asset list
 
+busy asset upload ./horse.anim     # an animation, uploaded untouched
+busy draw horse.anim --loop        # the bar plays it on its own clock
+busy draw sheet.anim -x -144       # pan a window over an oversized one
+
 busy template init                 # write the example templates
 busy draw ok                       # a template with no required variables
 busy draw error "Build failed"     # a template that requires a message
@@ -38,7 +42,8 @@ never appear on the same subcommand. The connection options — `--addr`, `--app
 rarely, a global short is reserved across every subcommand, and a short
 `--token` would invite secrets into shell history and `ps`. `--var` and
 `--template-dir` are long-only for the same reason: they're rarely typed, and
-templates are the exception, not the common case.
+templates are the exception, not the common case. So are `--loop` and
+`--section`, which apply only to `.anim` animations.
 
 ## Install
 
@@ -96,11 +101,34 @@ stays out of your shell history and out of `ps`.
   So `busy asset upload` scales the image down to fit and tells you when it
   did. Aspect ratio is preserved and an image already small enough is never
   enlarged. JPEG and GIF are converted to PNG on upload (the bar decodes PNG
-  only) and stored under a `.png` name.
+  only) and stored under a `.png` name. None of this applies to `.anim`
+  animations, which are exempt from the size rule — see below.
 - **`--screen` on `asset upload` is the fit target, not the destination.** An
   image fitted for the back panel still needs `busy draw --screen back` to be
   drawn there. Drawn on the front, a 160x80 asset exceeds the 72x16 panel and
   the bar rejects it.
+- **Animations are uploaded untouched.** A `.anim` is the bar's own animation
+  container, and `busy asset upload` recognises one by its signature rather
+  than its name — it is stored byte for byte, never re-encoded, and keeps the
+  `.anim` suffix, which is what makes `busy draw` treat it as an animation.
+  The header is checked first, because the device accepts a malformed
+  animation with 200, draws it with 200, and then shows solid magenta: nothing
+  in the HTTP conversation admits it failed.
+- **`busy draw name.anim` plays it; `--loop` replays it.** Without `--loop`
+  the animation stops on its last frame, which is the device's own default.
+  `--section NAME` plays one named range of frames — `asset upload` lists the
+  names a file offers, since nothing on the device will tell you. Both flags
+  are usage errors on anything that is not a `.anim`. Playback runs on the
+  firmware's clock: drawing frames yourself is not an option, because every
+  `display/draw` takes about 1.5 seconds on the device, capping a draw loop
+  near 0.7 fps.
+- **An oversized animation is a sprite sheet, not a mistake.** The size limit
+  that stops an image dead does not apply to a `.anim`: the firmware cuts a
+  panel-sized window out of a larger animation, and `-x`/`-y` move that
+  window. `busy draw sheet.anim -x -144` shows the third 72-pixel cell of a
+  216-wide sheet, so the off-display warning is suppressed for animations —
+  a negative anchor is the instruction there, not a slip. The format stores
+  width and height in one byte each, so a sheet caps at 255x255.
 - **Assets are all-or-nothing to delete.** The API has no per-file delete, so
   `busy asset delete` removes every asset for the app. It shows the file list
   it is about to destroy, then asks — `--yes` skips the prompt for CI, and

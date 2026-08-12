@@ -2,6 +2,7 @@
 
 use std::io::IsTerminal as _;
 
+use crate::anim;
 use crate::cli::{AssetDeleteArgs, AssetUploadArgs};
 use crate::config::{self, Settings};
 use crate::device::{AssetName, Device, Screen};
@@ -66,11 +67,21 @@ pub async fn list(settings: &Settings, emitter: &Emitter) -> Result<(), CliError
     emitter.success_items(&report, &json_summary, "assets", assets, false)
 }
 
-/// Convert a local image to a panel-sized PNG and upload it.
+/// Validate a name the device will accept, with advice when it will not.
+fn asset_name(name: &str) -> Result<AssetName, CliError> {
+    AssetName::new(name.to_owned()).map_err(|error| {
+        CliError::usage(format!(
+            "`{name}` is not a usable asset name: {error}. Rename the file to use only \
+             letters, digits, dot, underscore, or hyphen."
+        ))
+    })
+}
+
+/// Upload a local file as an asset: an image, or a `.anim` animation.
 ///
-/// Conversion happens here rather than at draw time because `assets/upload` is
-/// a dumb byte write: it accepts a JPEG happily and the failure only surfaces
-/// later, from a different command, as a device error about an `/ext` path.
+/// The two are told apart by content, not by extension — an animation carries
+/// a signature and an image does not, and a file's name is a claim while its
+/// first eight bytes are a fact.
 pub async fn upload(
     args: &AssetUploadArgs,
     settings: &Settings,
@@ -81,13 +92,122 @@ pub async fn upload(
         CliError::usage(format!("could not read {}: {error}", args.path.display()))
     })?;
 
+    let named_anim = args
+        .path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("anim"));
+
+    // A file *named* `.anim` goes down the animation path even when the
+    // signature is missing, so it fails with "expected it to start with
+    // bicycle0" rather than the image decoder's "could not decode the image",
+    // which would send you looking for the wrong problem.
+    if anim::is_anim(&bytes) || named_anim {
+        return upload_anim(&bytes, args, settings, emitter, dry_run).await;
+    }
+
+    upload_image(&bytes, args, settings, emitter, dry_run).await
+}
+
+/// Upload an animation byte for byte.
+///
+/// Nothing is re-encoded and nothing is resized. An animation larger than the
+/// panel is not a mistake here the way an oversized image is: measured
+/// 2026-08-12 on API 25.0.0, the firmware draws an oversized `.anim` happily
+/// and `-x`/`-y` pan a window over it, which is how a sprite sheet is done on
+/// this device.
+async fn upload_anim(
+    bytes: &[u8],
+    args: &AssetUploadArgs,
+    settings: &Settings,
+    emitter: &Emitter,
+    dry_run: bool,
+) -> Result<(), CliError> {
+    let parsed = anim::parse(bytes)?;
+
+    let stem = args
+        .path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .ok_or_else(|| {
+            CliError::usage(format!("{} has no usable file name", args.path.display()))
+        })?;
+    let name = asset_name(&format!("{stem}.anim"))?;
+
+    let original_name = args.path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    if original_name != name.as_str() {
+        emitter.warn(&format!(
+            "stored as `{name}`: `busy draw` decides an animation by that suffix, and \
+             `{original_name}` does not carry it"
+        ));
+    }
+
+    let panel = config::Defaults::panel(
+        args.screen
+            .map(config::screen_from_arg)
+            .unwrap_or(settings.screen),
+    );
+    if u32::from(parsed.width) > panel.0 || u32::from(parsed.height) > panel.1 {
+        emitter.warn(&format!(
+            "{}x{} is larger than the {}x{} panel; only part shows at once, so pan it \
+             with `busy draw {name} -x -<pixels>`",
+            parsed.width, parsed.height, panel.0, panel.1
+        ));
+    }
+
+    let mut detail = format!(
+        "{}x{}, {} frame(s) at {} fps, {}",
+        parsed.width,
+        parsed.height,
+        parsed.display_frames,
+        parsed.fps,
+        parsed.color_format.label()
+    );
+    if let Some(seconds) = parsed.duration_secs() {
+        detail.push_str(&format!(", {seconds:.1}s a loop"));
+    }
+
+    // Named sections are the only thing `--section` can be given, and nothing
+    // on the device lists them back, so this is the one moment the user can
+    // learn what their own file offers.
+    if !parsed.named_sections().is_empty() {
+        emitter.warn(&format!(
+            "sections available to `busy draw {name} --section`: {}",
+            parsed.named_sections().join(", ")
+        ));
+    }
+
+    if dry_run {
+        return emitter.success(
+            &format!("would upload {} bytes as `{name}` ({detail})", bytes.len()),
+            None,
+        );
+    }
+
+    let device = Device::connect(settings)?;
+    device.upload(name.as_str(), bytes.to_vec()).await?;
+
+    emitter.success(&format!("uploaded `{name}` ({detail})"), None)
+}
+
+/// Convert a local image to a panel-sized PNG and upload it.
+///
+/// Conversion happens here rather than at draw time because `assets/upload` is
+/// a dumb byte write: it accepts a JPEG happily and the failure only surfaces
+/// later, from a different command, as a device error about an `/ext` path.
+async fn upload_image(
+    bytes: &[u8],
+    args: &AssetUploadArgs,
+    settings: &Settings,
+    emitter: &Emitter,
+    dry_run: bool,
+) -> Result<(), CliError> {
     let screen = args
         .screen
         .map(config::screen_from_arg)
         .unwrap_or(settings.screen);
     let target = config::Defaults::panel(screen);
 
-    let prepared = image::prepare(&bytes, target)?;
+    let prepared = image::prepare(bytes, target)?;
 
     let stem = args
         .path
@@ -96,13 +216,7 @@ pub async fn upload(
         .ok_or_else(|| {
             CliError::usage(format!("{} has no usable file name", args.path.display()))
         })?;
-    let name = format!("{stem}.png");
-    let name = AssetName::new(name.clone()).map_err(|error| {
-        CliError::usage(format!(
-            "`{name}` is not a usable asset name: {error}. Rename the file to use only \
-             letters, digits, dot, underscore, or hyphen."
-        ))
-    })?;
+    let name = asset_name(&format!("{stem}.png"))?;
 
     if prepared.was_resized() {
         emitter.warn(&format!(

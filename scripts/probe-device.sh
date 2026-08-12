@@ -18,7 +18,7 @@ AUTH="Authorization: Bearer $BUSY_TOKEN"
 PROBE=$(mktemp -t probe).png
 
 say() { printf '\n=== %s\n' "$1"; }
-trap 'rm -f "$PROBE" "$PROBE.readback" "$PROBE.big" "$PROBE.jpg" "$PROBE.drawresp" "$PROBE.frame"' EXIT
+trap 'rm -f "$PROBE" "$PROBE.readback" "$PROBE.big" "$PROBE.jpg" "$PROBE.anim" "$PROBE.drawresp" "$PROBE.frame"' EXIT
 
 # An 8x8 1-bit greyscale PNG, 73 bytes.
 printf '%s' \
@@ -164,7 +164,59 @@ else
   echo "  (sips unavailable, skipping)"
 fi
 
-say "12. cleanup — delete-all, then list (expect 400: the directory itself is gone)"
+say "12. animations — expect an OVERSIZED .anim to draw, unlike an oversized image"
+# The `.anim` container is `bicycle0`, defined by the firmware in
+# `lib/anim_file/anim_file_format.h`. This builds the smallest legal one by
+# hand: a 144x16 frame, left half red and right half blue, stored raw.
+#
+# Measured 2026-08-12 on API 25.0.0. Two behaviours are pinned here, and both
+# contradict how the device treats images:
+#   - an animation larger than the panel draws fine (step 10's image 400s)
+#   - x/y pan a panel-sized window over it, so x=-72 shows the right half
+# Together they are the only way to do a sprite sheet on this device, and
+# `busy`'s bounds check suppresses its off-display warning because of them.
+python3 - "$PROBE.anim" <<'PY' 2>/dev/null || echo "  (python3 unavailable, skipping)"
+import struct, sys
+w, h = 144, 16
+# Pixels are written packed, and the format the firmware calls `rgb888` puts
+# BLUE first — so red is (0, 0, 255) here, not (255, 0, 0).
+px = b"".join(bytes((0, 0, 255) if x < 72 else (255, 0, 0)) for y in range(h) for x in range(w))
+frame = struct.pack("<BBH", 0, 1, len(px)) + px          # raw, one display frame
+section = struct.pack("<IIIB", 0, 0, 57, 1) + b"default\0"
+header = struct.pack("<8sBBBBBHBIIIII", b"bicycle0", 0, w, h, 0, 10,
+                     len(px), 0, len(section), len(frame), 1, 1, 1)
+open(sys.argv[1], "wb").write(header + section + frame)
+PY
+if [ -f "$PROBE.anim" ]; then
+  curl -s -H "$AUTH" -H 'Content-Type: application/octet-stream' --data-binary "@$PROBE.anim" \
+    -o /dev/null -w '  upload: %{http_code}\n' \
+    "$BAR/assets/upload?application_name=$APP&file=probe.anim"
+
+  half() {
+    curl -s -H "$AUTH" -X DELETE "$BAR/display/draw?application_name=$APP" >/dev/null
+    code=$(curl -s -H "$AUTH" -H 'Content-Type: application/json' -X POST "$BAR/display/draw" \
+      -o /dev/null -w '%{http_code}' \
+      -d "{\"application_name\":\"$APP\",\"priority\":100,\"elements\":[{\"id\":\"a\",\"type\":\"animation\",\"path\":\"probe.anim\",\"loop\":true,\"x\":$1,\"y\":0,\"align\":\"top_left\"}]}")
+    if [ "$code" != 200 ]; then
+      printf '  x=%s: expect draw 200, got %s -> CHANGED (oversized animations are refused now)\n' "$1" "$code"
+      return
+    fi
+    sleep 0.8
+    # /screen answers base64, and the front panel's pixels are BGR888.
+    seen=$(curl -s -H "$AUTH" "$BAR/screen?display=0" | base64 -d \
+      | od -An -tu1 -v | tr -s ' ' '\n' | grep -v '^$' | head -3 | paste -sd, -)
+    case "$seen" in
+      0,0,255) printf '  x=%s: red   -> %s\n' "$1" "$2$([ "$2" = red ] && echo ' MATCH' || echo ' CHANGED')" ;;
+      255,0,0) printf '  x=%s: blue  -> %s\n' "$1" "$2$([ "$2" = blue ] && echo ' MATCH' || echo ' CHANGED')" ;;
+      *)       printf '  x=%s: unexpected first pixel (BGR %s) -> CHANGED\n' "$1" "$seen" ;;
+    esac
+  }
+  half 0 red
+  half -72 blue
+  curl -s -H "$AUTH" -X DELETE "$BAR/display/draw?application_name=$APP" >/dev/null
+fi
+
+say "13. cleanup — delete-all, then list (expect 400: the directory itself is gone)"
 curl -s -H "$AUTH" -X DELETE "$BAR/display/draw?application_name=$APP"; echo
 curl -s -H "$AUTH" -X DELETE "$BAR/assets/upload?application_name=$APP"; echo
 curl -s -H "$AUTH" "$BAR/storage/list?path=/ext/user_assets/$APP"; echo

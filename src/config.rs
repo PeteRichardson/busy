@@ -33,6 +33,11 @@ impl Defaults {
     pub const PRIORITY: u8 = 95;
     pub const ELEMENT_ID: &'static str = "message";
     pub const IMAGE_ELEMENT_ID: &'static str = "image";
+    /// Distinct from `IMAGE_ELEMENT_ID` so that `--keep` composes an animation
+    /// over an image instead of replacing it: the device upserts by element
+    /// id, and one shared id would make the second draw silently evict the
+    /// first.
+    pub const ANIMATION_ELEMENT_ID: &'static str = "animation";
 
     /// The device's own implicit anchor is `top_left` — measured, not
     /// documented upstream. We override it: centring the anchor on the middle

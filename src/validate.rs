@@ -60,6 +60,22 @@ pub fn bounds_warnings(payload: &DisplayElements) -> Vec<String> {
         let y = element.y.unwrap_or(0);
         let id = &element.id;
 
+        // An animation is the one element that reads a negative anchor as an
+        // instruction rather than a mistake: the firmware cuts a panel-sized
+        // window out of a larger animation, and -x/-y are how that window is
+        // moved, which is how a sprite sheet is drawn on this device.
+        // Measured 2026-08-12 on API 25.0.0 — a 216x16 animation at x=-144
+        // renders its last 72 columns, pixel for pixel.
+        //
+        // Whether a given offset really lands on pixels depends on the
+        // animation's own dimensions, and those live in a file on the device
+        // that `draw` has no reason to fetch. So the checks below are skipped
+        // rather than adapted: a warning that cannot tell panning from a typo
+        // would cry wolf on every correct sheet draw.
+        if matches!(element.kind, ElementKind::Animation(_)) {
+            continue;
+        }
+
         // 1. The anchor point itself is off the display.
         if x < 0 || x >= width || y < 0 || y >= height {
             warnings.push(format!(

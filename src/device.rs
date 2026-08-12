@@ -4,8 +4,8 @@
 //! module reshuffle is a one-file fix rather than a shotgun edit.
 
 pub use busylib::model::assets::{
-    Align, DisplayElement, DisplayElements, ElementKind, Font, ImageElement, ImageSource, Lifetime,
-    Screen, TextElement,
+    Align, AnimationElement, DisplayElement, DisplayElements, ElementKind, Font, ImageElement,
+    ImageSource, Lifetime, Screen, TextElement,
 };
 pub use busylib::model::storage::StorageListElement;
 pub use busylib::types::app_name::AppName;

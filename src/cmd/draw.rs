@@ -10,7 +10,8 @@ use crate::cli::{AsArg, DrawArgs};
 use crate::cmd::template::SANITIZED_VARIABLE_WARNING;
 use crate::config::{self, FileConfig, Settings};
 use crate::device::{
-    AssetPath, Device, DisplayElement, DisplayElements, ImageElement, Opacity, StockPath,
+    AnimationElement, AssetPath, Device, DisplayElement, DisplayElements, ImageElement, Opacity,
+    StockPath,
 };
 use crate::error::CliError;
 use crate::output::Emitter;
@@ -23,6 +24,34 @@ pub enum Resolved {
     Asset(AssetPath),
     Stock(StockPath),
     Template(Box<Template>),
+}
+
+/// The suffix that makes a name an animation rather than an image.
+const ANIM_SUFFIX: &str = ".anim";
+
+/// The two element kinds a named draw can produce. `DisplayElement::builder`
+/// takes each through a different terminal method, so the choice has to be
+/// carried this far rather than collapsed earlier.
+enum Element {
+    Image(ImageElement),
+    Animation(AnimationElement),
+}
+
+impl Resolved {
+    /// Whether this name should be drawn as an animation.
+    ///
+    /// Decided by suffix, because that is all `draw` has: the file lives on
+    /// the device, and reading it back to sniff its signature would cost a
+    /// round trip on every draw to learn what the name already says. Upload
+    /// is where content and name are reconciled — it stores a `.anim` under
+    /// that suffix precisely so this check can be cheap.
+    fn is_animation(&self) -> bool {
+        match self {
+            Resolved::Asset(path) => path.as_str().ends_with(ANIM_SUFFIX),
+            Resolved::Stock(path) => path.as_str().ends_with(ANIM_SUFFIX),
+            Resolved::Template(_) => false,
+        }
+    }
 }
 
 /// Which command is resolving a name — `run` shares `resolve`/`run` with
@@ -176,10 +205,10 @@ pub async fn run(
                     )
                 }
                 resolved => {
-                    let kind = if matches!(resolved, Resolved::Stock(_)) {
-                        Kind::Stock
-                    } else {
-                        Kind::Image
+                    let kind = match &resolved {
+                        _ if resolved.is_animation() => Kind::Animation,
+                        Resolved::Stock(_) => Kind::Stock,
+                        _ => Kind::Image,
                     };
                     (build_payload(args, settings, file, &resolved)?, kind, None)
                 }
@@ -187,6 +216,7 @@ pub async fn run(
         };
 
     overrides::reject_vars_unless_template(args, kind)?;
+    overrides::reject_animation_flags_unless_animation(args, kind)?;
     let payload = overrides::apply(payload, args, kind)?;
 
     for warning in crate::validate::bounds_warnings(&payload) {
@@ -235,20 +265,53 @@ fn build_payload(
     // there is nothing to reject here: clap's own "unexpected argument"
     // covers both the --file and the named-draw paths uniformly, before
     // either one reaches this function.
-    let mut element = match resolved {
-        Resolved::Asset(path) => ImageElement::asset(path.clone()),
-        Resolved::Stock(path) => ImageElement::stock(path.clone()),
-        Resolved::Template(_) => {
-            unreachable!("run() renders a template on its own branch before calling build_payload")
-        }
-    }
-    .map_err(|error| CliError::usage(error.to_string()))?;
+    let opacity = args
+        .common
+        .opacity
+        .map(|percent| {
+            Opacity::new(percent)
+                .map_err(|error| CliError::usage(format!("invalid --opacity: {error}")))
+        })
+        .transpose()?;
 
-    if let Some(percent) = args.common.opacity {
-        let opacity = Opacity::new(percent)
-            .map_err(|error| CliError::usage(format!("invalid --opacity: {error}")))?;
-        element = element.opacity(opacity);
-    }
+    let element = if resolved.is_animation() {
+        let mut animation = match resolved {
+            Resolved::Asset(path) => AnimationElement::asset(path.clone()),
+            Resolved::Stock(path) => AnimationElement::stock(path.clone()),
+            Resolved::Template(_) => unreachable!("a template is never an animation"),
+        }
+        .map_err(|error| CliError::usage(error.to_string()))?;
+
+        // Sent only when asked for, so an omitted flag leaves the field out of
+        // the JSON entirely and the device keeps its own default, rather than
+        // this CLI inventing one.
+        if args.common.repeat {
+            animation = animation.repeat(true);
+        }
+        if let Some(section) = &args.common.section {
+            animation = animation.section(section.clone());
+        }
+        if let Some(opacity) = opacity {
+            animation = animation.opacity(opacity);
+        }
+        Element::Animation(animation)
+    } else {
+        let mut image = match resolved {
+            Resolved::Asset(path) => ImageElement::asset(path.clone()),
+            Resolved::Stock(path) => ImageElement::stock(path.clone()),
+            Resolved::Template(_) => {
+                unreachable!(
+                    "run() renders a template on its own branch before calling build_payload"
+                )
+            }
+        }
+        .map_err(|error| CliError::usage(error.to_string()))?;
+
+        if let Some(opacity) = opacity {
+            image = image.opacity(opacity);
+        }
+        Element::Image(image)
+    };
 
     let screen = args
         .common
@@ -258,12 +321,13 @@ fn build_payload(
         .unwrap_or(settings.screen);
     let (default_x, default_y) = config::Defaults::position(screen);
 
-    let id = args
-        .common
-        .delivery
-        .id
-        .clone()
-        .unwrap_or_else(|| config::Defaults::IMAGE_ELEMENT_ID.to_owned());
+    let id = args.common.delivery.id.clone().unwrap_or_else(|| {
+        match element {
+            Element::Image(_) => config::Defaults::IMAGE_ELEMENT_ID,
+            Element::Animation(_) => config::Defaults::ANIMATION_ELEMENT_ID,
+        }
+        .to_owned()
+    });
     let id = crate::device::ElementId::new(id)
         .map_err(|error| CliError::usage(format!("invalid --id: {error}")))?;
 
@@ -293,7 +357,10 @@ fn build_payload(
     let mut payload = DisplayElements::new(app)
         .map_err(|error| CliError::usage(error.to_string()))?
         .priority(priority)
-        .element(builder.image(element));
+        .element(match element {
+            Element::Image(image) => builder.image(image),
+            Element::Animation(animation) => builder.animation(animation),
+        });
 
     if let Some(input) = &args.common.delivery.led {
         payload = payload.led_notification_color(crate::color::parse(input)?);
